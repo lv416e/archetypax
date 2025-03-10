@@ -3,7 +3,7 @@
 GPU-accelerated Archetypal Analysis implementation using JAX
 
 [![PyPI version](https://badge.fury.io/py/archetypax.svg)](https://badge.fury.io/py/archetypax)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ## Overview
 
@@ -155,7 +155,7 @@ If you use this package in your research, please cite:
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
 
 ## Contributing
 
