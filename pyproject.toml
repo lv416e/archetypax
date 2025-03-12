@@ -28,21 +28,31 @@ dependencies = [
     "numpy>=1.20.0",
     "scikit-learn>=1.0.0",
     "optax>=0.1.0",
+    "pandas>=1.3.0",
 ]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.9.0", "pytest>=7.0.0", "black>=23.0.0"]
+dev = [
+    "ruff>=0.9.0",
+    "pytest>=7.0.0",
+    "black==23.7.0",
+    "mypy>=1.8.0",
+    "types-requests",
+    "types-setuptools",
+    "pandas-stubs",
+    "types-scipy",
+]
 examples = [
-    "matplotlib>=3.5.0",
+    "matplotlib>=3.7.5",
     "pandas>=1.3.0",
-    "seaborn>=0.11.0",
+    "seaborn>=0.13.2",
     "jupyter>=1.0.0",
 ]
 
 [tool.ruff]
 target-version = "py38"
 line-length = 100
-select = [
+lint.select = [
     "E",   # pycodestyle errors
     "F",   # pyflakes
     "W",   # pycodestyle warnings
@@ -55,6 +65,14 @@ select = [
     "SIM", # flake8-simplify
     "RUF", # ruff-specific rules
 ]
+lint.ignore = [
+    "N803",
+    "N806",
+    "D203", # one-blank-line-before-class (conflicts with D211)
+    "D212", # multi-line-summary-first-line (conflicts with D213)
+    "E501", # line too long (managed by formatter)
+]
+lint.dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 exclude = [
     ".git",
     ".eggs",
@@ -65,21 +83,39 @@ exclude = [
     "venv",
     "__pycache__",
 ]
-ignore = [
-    "D203", # one-blank-line-before-class (conflicts with D211)
-    "D212", # multi-line-summary-first-line (conflicts with D213)
-    "E501", # line too long (managed by formatter)
-]
-dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
-[tool.ruff.pydocstyle]
+[tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-third-party = ["numpy", "jax", "sklearn", "optax"]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "tests/*" = ["D", "S101"]
 "examples/*" = ["D", "E501"]
 "docs/*" = ["D", "E402"]
 "__init__.py" = ["F401", "F403"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = false
+strict_optional = true
+exclude = ["docs/", "tests/"]
+
+[[tool.mypy.overrides]]
+module = [
+    "jax.*",
+    "matplotlib.*",
+    "seaborn.*",
+    "sklearn.*",
+    "scipy.*",
+    "pandas.*",
+    "optax.*",
+]
+ignore_missing_imports = true
