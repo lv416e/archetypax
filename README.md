@@ -134,9 +134,9 @@ $$
 
 subject to:
 
-- \mathbf{w} is non-negative
-- Each row of \mathbf{w} sums to 1 (simplex constraint)
-- \mathbf{Z} lies within the convex hull of \mathbf{X}
+- $\mathbf{w}$ is non-negative
+- Each row of $\mathbf{w}$ sums to 1 (simplex constraint)
+- $\mathbf{Z}$ lies within the convex hull of $\mathbf{X}$
 
 This implementation uses JAX's automatic differentiation and optimization tools to efficiently solve this problem on GPUs. It also incorporates several enhancements:
 
