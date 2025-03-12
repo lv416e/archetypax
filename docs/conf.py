@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.abspath(".."))
 
 # Project information
 project = "archetypax"
-copyright = f"{datetime.now().year}, Your Name"
-author = "Your Name"
+copyright = f"{datetime.now().year}, mary"
+author = "mary"
 
 # Import package to get version
 import archetypax
@@ -61,3 +61,32 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**.ipynb_checkpoints"]
 # HTML output settings
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
+
+# Read the Docs and GitHub Pages settings
+# This will be used by both platforms
+html_baseurl = "https://archetypax.readthedocs.io/"
+
+# Use relative URLs for resources
+html_use_index = True
+html_split_index = False
+html_copy_source = True
+html_show_sourcelink = True
+html_show_sphinx = True
+html_show_copyright = True
+
+# Create a _static directory if it doesn't exist
+import os
+
+if not os.path.exists("_static"):
+    os.makedirs("_static")
+
+# Read the Docs specific settings
+# This part is only executed when building on Read the Docs
+on_rtd = os.environ.get("READTHEDOCS", None) == "True"
+if on_rtd:
+    # No need for special settings, Read the Docs handles most of this automatically
+    pass
+else:
+    # Local build settings
+    pass
+    pass
