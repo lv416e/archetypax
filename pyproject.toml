@@ -40,7 +40,6 @@ dev = [
     "types-requests",
     "types-setuptools",
     "pandas-stubs",
-    "types-scipy",
 ]
 examples = [
     "matplotlib>=3.7.5",
