@@ -129,7 +129,7 @@ Archetypal Analysis solves the following optimization problem:
 Given a data matrix $\mathbf{X} \in \mathbb{R}^{n \times d}$ with n samples and d features, find k archetypes $\mathbf{Z} \in \mathbb{R}^{k \times p}$ and weights $\mathbf{w} \in \mathbb{R}^{n \times k}$ such that:
 
 $$
-\text{minimize} \| \mathbf{X} - \mathbf{w} \, \mathbf{Z} \|^2_{\text{F}}
+\text{minimize} \| \mathbf{X} - \mathbf{w} \cdot \mathbf{Z} \|^2_{\text{F}}
 $$
 
 subject to:
