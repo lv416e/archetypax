@@ -41,6 +41,13 @@ dev = [
     "types-setuptools",
     "pandas-stubs",
 ]
+docs = [
+    "sphinx>=7.2.0",
+    "sphinx-rtd-theme>=2.0.0",
+    "sphinx-autodoc-typehints>=1.25.0",
+    "myst-parser>=2.0.0",
+    "nbsphinx>=0.9.0",
+]
 examples = [
     "matplotlib>=3.7.5",
     "pandas>=1.3.0",
