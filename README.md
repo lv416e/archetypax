@@ -18,7 +18,7 @@ AA finds interpretable extremal points that often correspond to meaningful proto
 
 ## Features
 
-- 🚀 **GPU Acceleration**: Utilizes JAX for fast computation on GPUs
+- 🚀 **GPU/TPU Acceleration**: Utilizes JAX for fast computation on GPUs
 - 🔍 **Interpretable Results**: Finds meaningful archetypes that represent extremal patterns in data
 - 🧠 **Smart Initialization**: Uses k-means++ style initialization for better convergence
 - 🛠️ **Numerical Stability**: Implements various techniques for improved stability
@@ -126,14 +126,17 @@ plt.show()
 
 Archetypal Analysis solves the following optimization problem:
 
-Given a data matrix X ∈ ℝⁿᵖ with n samples and p features, find k archetypes Z ∈ ℝᵏᵖ and weights W ∈ ℝⁿᵏ such that:
+Given a data matrix $\mathbf{X} \in \mathbb{R}^{n \times d}$ with n samples and d features, find k archetypes $\mathbf{Z} \in \mathbb{R}^{k \times p}$ and weights $\mathbf{w} \in \mathbb{R}^{n \times k}$ such that:
 
-minimize ‖X - WZ‖²ᶠ
+$$
+\text{minimize} \| \mathbf{X} - \mathbf{w} \, \mathbf{Z} \|^2_{\text{F}}
+$$
 
 subject to:
-- W is non-negative
-- Each row of W sums to 1 (simplex constraint)
-- Z lies within the convex hull of X
+
+- \mathbf{w} is non-negative
+- Each row of \mathbf{w} sums to 1 (simplex constraint)
+- \mathbf{Z} lies within the convex hull of \mathbf{X}
 
 This implementation uses JAX's automatic differentiation and optimization tools to efficiently solve this problem on GPUs. It also incorporates several enhancements:
 
@@ -148,7 +151,7 @@ If you use this package in your research, please cite:
 
 ```
 @software{archetypax2025,
-  author = {.},
+  author = {mary},
   title = {archetypax: GPU-accelerated Archetypal Analysis using JAX},
   year = {2025},
   url = {https://github.com/lv416e/archetypax}
