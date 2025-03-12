@@ -4,8 +4,8 @@
 
 [![PyPI version](https://badge.fury.io/py/archetypax.svg)](https://badge.fury.io/py/archetypax)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://github.com/username/archetypax/actions/workflows/pytest.yml/badge.svg)](https://github.com/username/archetypax/actions/workflows/pytest.yml)
-[![Lint](https://github.com/username/archetypax/actions/workflows/lint.yml/badge.svg)](https://github.com/username/archetypax/actions/workflows/lint.yml)
+[![Tests](https://github.com/lv416e/archetypax/actions/workflows/pytest.yml/badge.svg)](https://github.com/lv416e/archetypax/actions/workflows/pytest.yml)
+[![Lint](https://github.com/lv416e/archetypax/actions/workflows/lint.yml/badge.svg)](https://github.com/lv416e/archetypax/actions/workflows/lint.yml)
 
 ## Overview
 
@@ -151,7 +151,7 @@ If you use this package in your research, please cite:
   author = {.},
   title = {archetypax: GPU-accelerated Archetypal Analysis using JAX},
   year = {2025},
-  url = {https://github.com/yourusername/archetypax}
+  url = {https://github.com/lv416e/archetypax}
 }
 ```
 
