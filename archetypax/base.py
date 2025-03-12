@@ -307,7 +307,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
             Weight matrix representing each sample as a combination of archetypes
         """
         model = self.fit(X, normalize=normalize)
-        return model.transform(X)
+        return np.asarray(model.transform(X))
 
     def reconstruct(self, X: np.ndarray = None) -> np.ndarray:
         """
