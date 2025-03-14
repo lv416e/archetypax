@@ -136,6 +136,43 @@ Versioning
 - MINOR version for backwards-compatible functionality additions
 - PATCH version for backwards-compatible bug fixes
 
+Release Process
+-------------
+
+``archetypax`` uses an automated release process through GitHub Actions:
+
+1. **Update CHANGELOG.md**: Before releasing, ensure the ``CHANGELOG.md`` file is updated with all notable changes under the "Unreleased" section.
+
+2. **Create a release tag**: To trigger a release, create and push a tag with the version number:
+
+   .. code-block:: bash
+
+       git tag v0.1.0
+       git push origin v0.1.0
+
+3. **Automated workflow**: The release workflow will automatically:
+
+   - Build the package
+   - Run tests
+   - Publish to PyPI
+   - Create a GitHub release with notes from:
+     - The CHANGELOG.md file
+     - Pull request descriptions and labels
+
+4. **Verify the release**: After the workflow completes, verify:
+
+   - The package is available on PyPI
+   - The GitHub release is created with proper notes
+   - The documentation is updated
+
+When creating pull requests that should be included in release notes, use appropriate labels:
+
+- ``feature`` or ``enhancement`` for new features
+- ``bug`` or ``fix`` for bug fixes
+- ``documentation`` for documentation changes
+- ``test`` for test improvements
+- ``chore`` or ``dependencies`` for maintenance tasks
+
 Issue Reporting
 -------------
 
