@@ -100,7 +100,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Entropy regularization
         entropy_reg = 0.0
         if self.lambda_reg > 0:
-            entropy_reg = float(
+            entropy_reg = jnp.float32(
                 (
                     jnp.mean(jnp.sum(-weights_first * jnp.log(jnp.maximum(weights_first, 1e-10)), axis=1))
                     + jnp.mean(jnp.sum(-weights_second * jnp.log(jnp.maximum(weights_second, 1e-10)), axis=1))
