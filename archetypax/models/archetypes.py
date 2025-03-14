@@ -331,7 +331,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         projected_archetypes = jax.vmap(_process_single_archetype)(jnp.arange(archetypes.shape[0]))
 
-        return projected_archetypes
+        return jnp.asarray(projected_archetypes)
 
     @partial(jax.jit, static_argnums=(0,))
     def loss_function(self, archetypes, weights, X):

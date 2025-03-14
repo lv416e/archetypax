@@ -93,7 +93,9 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
         dists = jnp.sum((X[:, jnp.newaxis, :] - archetypes[jnp.newaxis, :, :]) ** 2, axis=2)
         k = min(10, X.shape[0])
-        projected_archetypes = jnp.stack([_process_archetype(i) for i in range(archetypes.shape[0])])
+        projected_archetypes = jnp.stack(
+            [_process_archetype(i) for i in range(archetypes.shape[0])]
+        )
         return projected_archetypes
 
     def fit(self, X: np.ndarray, normalize: bool = False) -> "ArchetypalAnalysis":
@@ -125,7 +127,9 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
         # Initialize weights (more stable initialization)
         self.key, subkey = jax.random.split(self.key)
-        weights_init = jax.random.uniform(subkey, (n_samples, self.n_archetypes), minval=0.1, maxval=0.9)
+        weights_init = jax.random.uniform(
+            subkey, (n_samples, self.n_archetypes), minval=0.1, maxval=0.9
+        )
         weights_init = self.project_weights(weights_init)
 
         # Initialize archetypes (k-means++ style initialization)
@@ -256,7 +260,11 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
             raise ValueError("Model must be fitted before transform")
 
         # Scale input data
-        X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
+        X_scaled = (
+            (X - self.X_mean) / self.X_std
+            if self.X_mean is not None and self.X_std is not None
+            else X
+        )
 
         # Simple approach to find weights (simplified non-negative least squares)
         n_samples = X_scaled.shape[0]
@@ -294,7 +302,9 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
         return weights
 
-    def fit_transform(self, X: np.ndarray, y: np.ndarray = None, normalize: bool = False) -> np.ndarray:
+    def fit_transform(
+        self, X: np.ndarray, y: np.ndarray = None, normalize: bool = False
+    ) -> np.ndarray:
         """
         Fit the model and transform the data.
 
