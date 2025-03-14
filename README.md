@@ -31,7 +31,7 @@ pip install archetypax
 ```
 
 ### Requirements
-- Python 3.12.8+
+- Python 3.10+
 - JAX
 - NumPy
 - scikit-learn
