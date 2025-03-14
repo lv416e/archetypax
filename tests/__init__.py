@@ -1,1 +1,1 @@
-"""Test package for archetypax."""
+"""Test package for the archetypax library."""

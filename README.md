@@ -4,7 +4,7 @@
 
 [![PyPI version](https://badge.fury.io/py/archetypax.svg)](https://badge.fury.io/py/archetypax)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://github.com/lv416e/archetypax/actions/workflows/pytest.yml/badge.svg)](https://github.com/lv416e/archetypax/actions/workflows/pytest.yml)
+[![Tests](https://github.com/lv416e/archetypax/actions/workflows/pytest.yml/badge.svg)](https://github.com/lv416e/archetypax/actions/workflows/tests.yml)
 [![Lint](https://github.com/lv416e/archetypax/actions/workflows/lint.yml/badge.svg)](https://github.com/lv416e/archetypax/actions/workflows/lint.yml)
 
 ## Overview
@@ -31,7 +31,7 @@ pip install archetypax
 ```
 
 ### Requirements
-- Python 3.12.8+
+- Python 3.10+
 - JAX
 - NumPy
 - scikit-learn
@@ -61,11 +61,47 @@ mse = np.mean((X - X_reconstructed) ** 2)
 print(f"Reconstruction MSE: {mse:.6f}")
 ```
 
+## Import Patterns
+
+ArchetypAX supports multiple import patterns for flexibility:
+
+### Direct Class Imports (Recommended)
+
+```python
+from archetypax import ArchetypalAnalysis, ImprovedArchetypalAnalysis, BiarchetypalAnalysis
+```
+
+### Explicit Module Imports
+
+```python
+from archetypax.models.base import ArchetypalAnalysis
+from archetypax.models.biarchetypes import BiarchetypalAnalysis
+from archetypax.tools.evaluation import ArchetypalAnalysisEvaluator
+```
+
+### Module-Level Imports
+
+```python
+from archetypax.models import ArchetypalAnalysis
+from archetypax.tools import ArchetypalAnalysisVisualizer
+```
+
 ## Documentation
 
 ### Parameters
 
+#### ArchetypalAnalysis / ImprovedArchetypalAnalysis
 - `n_archetypes`: Number of archetypes to find
+- `max_iter`: Maximum number of iterations (default: 500)
+- `tol`: Convergence tolerance (default: 1e-6)
+- `random_seed`: Random seed for initialization (default: 42)
+- `learning_rate`: Learning rate for optimizer (default: 0.001)
+
+#### BiarchetypalAnalysis
+
+- `n_archetypes_first`: Number of archetypes in the first set
+- `n_archetypes_second`: Number of archetypes in the second set
+- `mixture_weight`: Weight for mixing the two archetype sets (0-1) (default: 0.5)
 - `max_iter`: Maximum number of iterations (default: 500)
 - `tol`: Convergence tolerance (default: 1e-6)
 - `random_seed`: Random seed for initialization (default: 42)
@@ -78,6 +114,8 @@ print(f"Reconstruction MSE: {mse:.6f}")
 - `fit_transform(X)`: Fit the model and transform the data
 - `reconstruct(X)`: Reconstruct data from archetype weights
 - `get_loss_history()`: Get the loss history from training
+- `get_all_archetypes()`: Get both sets of archetypes (BiarchetypalAnalysis only)
+- `get_all_weights()`: Get both sets of weights (BiarchetypalAnalysis only)
 
 ## Examples
 
@@ -87,6 +125,7 @@ print(f"Reconstruction MSE: {mse:.6f}")
 import numpy as np
 import matplotlib.pyplot as plt
 from archetypax import ArchetypalAnalysis
+from archetypax.tools.visualization import ArchetypalAnalysisVisualizer
 
 # Generate some interesting 2D data (a triangle with points inside)
 n_samples = 500
@@ -100,26 +139,47 @@ model.fit(X)
 
 # Plot original data and archetypes
 plt.figure(figsize=(10, 8))
-plt.scatter(X[:, 0], X[:, 1], alpha=0.5, label="Data points")
-plt.scatter(
-    model.archetypes[:, 0],
-    model.archetypes[:, 1],
-    color='red',
-    s=100,
-    marker='*',
-    label="Archetypes"
-)
-
-# Draw the archetypal convex hull
-hull_points = np.vstack([model.archetypes, model.archetypes[0]])
-plt.plot(hull_points[:, 0], hull_points[:, 1], 'r--', label="Archetype convex hull")
-
-plt.legend()
+ArchetypalAnalysisVisualizer.plot_archetypes_2d(model, X)
 plt.title("Archetypal Analysis of 2D Data")
-plt.xlabel("Feature 1")
-plt.ylabel("Feature 2")
-plt.grid(alpha=0.3)
 plt.show()
+```
+
+### Using Biarchetypal Analysis
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from archetypax import BiarchetypalAnalysis
+from archetypax.tools.visualization import ArchetypalAnalysisVisualizer
+
+# Generate synthetic data
+np.random.seed(42)
+X = np.random.rand(500, 5)
+
+# Initialize and fit the model with two sets of archetypes
+model = BiarchetypalAnalysis(
+    n_archetypes_first=2,   # Number of archetypes in the first set
+    n_archetypes_second=2,  # Number of archetypes in the second set
+    mixture_weight=0.5,     # Weight for mixing the two archetype sets (0-1)
+    max_iter=500,
+    random_seed=42
+)
+model.fit(X)
+
+# Get both sets of archetypes
+positive_archetypes, negative_archetypes = model.get_all_archetypes()
+print("Positive archetypes shape:", positive_archetypes.shape)
+print("Negative archetypes shape:", negative_archetypes.shape)
+
+# Get both sets of weights
+positive_weights, negative_weights = model.get_all_weights()
+print("Positive weights shape:", positive_weights.shape)
+print("Negative weights shape:", negative_weights.shape)
+
+# Reconstruct data using both sets of archetypes
+X_reconstructed = model.reconstruct()
+mse = np.mean((X - X_reconstructed) ** 2)
+print(f"Reconstruction MSE: {mse:.6f}")
 ```
 
 ## How It Works

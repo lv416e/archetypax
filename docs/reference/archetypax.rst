@@ -1,40 +1,14 @@
 archetypax package
 ==================
 
-Submodules
-----------
+Subpackages
+-----------
 
-archetypax.base module
-----------------------
+.. toctree::
+   :maxdepth: 4
 
-.. automodule:: archetypax.base
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-archetypax.evaluation module
-----------------------------
-
-.. automodule:: archetypax.evaluation
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-archetypax.model module
------------------------
-
-.. automodule:: archetypax.model
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-archetypax.visualization module
--------------------------------
-
-.. automodule:: archetypax.visualization
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   archetypax.models
+   archetypax.tools
 
 Module contents
 ---------------
