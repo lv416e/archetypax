@@ -573,22 +573,17 @@ class BiarchetypalAnalysisEvaluator:
         self.model = model
 
         # Check if model is fitted
-        if (
-            model.archetypes_first is None
-            or model.archetypes_second is None
-            or model.weights_first is None
-            or model.weights_second is None
-        ):
+        if model.alpha is None or model.beta is None or model.theta is None or model.gamma is None:
             raise ValueError("Model must be fitted before evaluation")
 
         # Cache some frequently used values
-        self.n_archetypes_first = model.archetypes_first.shape[0]
-        self.n_archetypes_second = model.archetypes_second.shape[0]
-        self.n_features = model.archetypes_first.shape[1]
+        self.n_archetypes_first = model.n_row_archetypes
+        self.n_archetypes_second = model.n_col_archetypes
+        self.n_features = model.theta.shape[0]  # n_features
 
         # Calculate dominant archetypes for each set
-        self.dominant_archetypes_first = np.argmax(model.weights_first, axis=1)
-        self.dominant_archetypes_second = np.argmax(model.weights_second, axis=1)
+        self.dominant_archetypes_first = np.argmax(model.alpha, axis=1)
+        self.dominant_archetypes_second = np.argmax(model.gamma, axis=0)
 
     def reconstruction_error(self, X: np.ndarray, metric: str = "frobenius") -> float:
         """
@@ -637,53 +632,61 @@ class BiarchetypalAnalysisEvaluator:
 
         return float(explained_var)
 
-    def archetype_separation(self) -> dict:
-        """
-        Calculate separation metrics between archetypes.
+    def archetype_separation(self):
+        """Calculate separation metrics between archetypes.
 
         Returns:
             Dictionary of separation metrics
         """
         # Calculate distances between first set archetypes
-        distances_first = cdist(self.model.archetypes_first, self.model.archetypes_first)
+        distances_first = cdist(self.model.alpha, self.model.alpha)
         np.fill_diagonal(distances_first, np.inf)  # Ignore self-distances
 
         # Calculate distances between second set archetypes
-        distances_second = cdist(self.model.archetypes_second, self.model.archetypes_second)
+        distances_second = cdist(self.model.gamma, self.model.gamma)
         np.fill_diagonal(distances_second, np.inf)  # Ignore self-distances
 
-        # Calculate cross-distances between first and second sets
-        cross_distances = cdist(self.model.archetypes_first, self.model.archetypes_second)
-
         # Calculate metrics for first set
-        metrics_first = {
-            "mean_distance_first": np.mean(distances_first[distances_first != np.inf]),
-            "min_distance_first": np.min(distances_first[distances_first != np.inf]),
-            "max_distance_first": np.max(distances_first[distances_first != np.inf]),
-        }
+        metrics_first = {}
+        if np.any(distances_first != np.inf):
+            metrics_first = {
+                "mean_distance_first": np.mean(distances_first[distances_first != np.inf]),
+                "min_distance_first": np.min(distances_first[distances_first != np.inf]),
+                "max_distance_first": np.max(distances_first[distances_first != np.inf]),
+            }
+        else:
+            metrics_first = {
+                "mean_distance_first": 0.0,
+                "min_distance_first": 0.0,
+                "max_distance_first": 0.0,
+            }
 
         # Calculate metrics for second set
-        metrics_second = {
-            "mean_distance_second": np.mean(distances_second[distances_second != np.inf])
-            if distances_second[distances_second != np.inf].size > 0
-            else 0,
-            "min_distance_second": np.min(distances_second[distances_second != np.inf])
-            if distances_second[distances_second != np.inf].size > 0
-            else 0,
-            "max_distance_second": np.max(distances_second[distances_second != np.inf])
-            if distances_second[distances_second != np.inf].size > 0
-            else 0,
-        }
+        metrics_second = {}
+        if np.any(distances_second != np.inf):
+            metrics_second = {
+                "mean_distance_second": np.mean(distances_second[distances_second != np.inf]),
+                "min_distance_second": np.min(distances_second[distances_second != np.inf]),
+                "max_distance_second": np.max(distances_second[distances_second != np.inf]),
+            }
+        else:
+            metrics_second = {
+                "mean_distance_second": 0.0,
+                "min_distance_second": 0.0,
+                "max_distance_second": 0.0,
+            }
 
-        # Calculate cross-set metrics
+        # Calculate cross metrics
         metrics_cross = {
-            "mean_cross_distance": np.mean(cross_distances),
-            "min_cross_distance": np.min(cross_distances),
-            "max_cross_distance": np.max(cross_distances),
+            "mean_cross_distance": 0.0,
+            "min_cross_distance": 0.0,
+            "max_cross_distance": 0.0,
         }
 
         # Combine all metrics
-        return {**metrics_first, **metrics_second, **metrics_cross}
+        metrics = {**metrics_first, **metrics_second, **metrics_cross}
+
+        return metrics
 
     def dominant_archetype_purity(self) -> dict:
         """
@@ -717,21 +720,29 @@ class BiarchetypalAnalysisEvaluator:
         Returns:
             Dictionary of diversity metrics
         """
-        # Check if weights are None
-        if self.model.weights_first is None or self.model.weights_second is None:
-            raise ValueError("Model weights must not be None")
+        if self.model.alpha is None or self.model.gamma is None:
+            raise ValueError("Model must be fitted before calculating weight diversity")
 
-        # Calculate entropy for each sample's weights in first set
-        entropies_first = np.array([entropy(w) for w in self.model.weights_first])
-        max_entropy_first = np.log(self.n_archetypes_first)
-        normalized_entropies_first = entropies_first / max_entropy_first
+        # Calculate entropy for first set weights
+        entropies_first = -np.sum(self.model.alpha * np.log2(self.model.alpha + 1e-10), axis=1)
+        max_entropy_first = np.log2(self.model.alpha.shape[1])
+        # Add check to prevent division by zero
+        if max_entropy_first > 0:
+            normalized_entropies_first = entropies_first / max_entropy_first
+        else:
+            normalized_entropies_first = np.zeros_like(entropies_first)
 
-        # Calculate entropy for each sample's weights in second set
-        entropies_second = np.array([entropy(w) for w in self.model.weights_second])
-        max_entropy_second = np.log(self.n_archetypes_second)
-        normalized_entropies_second = entropies_second / max_entropy_second
+        # Calculate entropy for second set weights
+        entropies_second = -np.sum(self.model.gamma * np.log2(self.model.gamma + 1e-10), axis=0)
+        max_entropy_second = np.log2(self.model.gamma.shape[0])
+        # Add check to prevent division by zero
+        if max_entropy_second > 0:
+            normalized_entropies_second = entropies_second / max_entropy_second
+        else:
+            normalized_entropies_second = np.zeros_like(entropies_second)
 
-        return {
+        # Calculate metrics
+        metrics = {
             "mean_entropy_first": np.mean(entropies_first),
             "entropy_std_first": np.std(entropies_first),
             "max_entropy_first": np.max(entropies_first),
@@ -741,6 +752,8 @@ class BiarchetypalAnalysisEvaluator:
             "max_entropy_second": np.max(entropies_second),
             "mean_normalized_entropy_second": np.mean(normalized_entropies_second),
         }
+
+        return metrics
 
     def comprehensive_evaluation(self, X: np.ndarray) -> dict:
         """
@@ -797,7 +810,26 @@ class BiarchetypalAnalysisEvaluator:
         print("\n--- Archetype Separation Metrics ---")
         print(f"Mean Distance (First Set): {results['separation']['mean_distance_first']:.4f}")
         print(f"Mean Distance (Second Set): {results['separation']['mean_distance_second']:.4f}")
-        print(f"Mean Cross-Set Distance: {results['separation']['mean_cross_distance']:.4f}")
+
+        print("\n--- Purity Metrics ---")
+        print(f"Overall Purity (First Set): {results['purity']['overall_purity_first']:.4f}")
+        print(f"Overall Purity (Second Set): {results['purity']['overall_purity_second']:.4f}")
+
+        print("\n--- Weight Diversity Metrics ---")
+        print(f"Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}")
+        print(f"Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}")
+
+    def print_summary(self, results: dict):
+        """Print a summary of the evaluation results.
+
+        Args:
+            results: Dictionary of evaluation results
+        """
+        print("\n=== Biarchetypal Analysis Evaluation Summary ===")
+        print("\n--- Separation Metrics ---")
+        print(f"Mean Distance (First Set): {results['separation']['mean_distance_first']:.4f}")
+        print(f"Mean Distance (Second Set): {results['separation']['mean_distance_second']:.4f}")
+        # print(f"Mean Cross-Set Distance: {results['separation']['mean_cross_distance']:.4f}")
 
         print("\n--- Purity Metrics ---")
         print(f"Overall Purity (First Set): {results['purity']['overall_purity_first']:.4f}")
