@@ -3,8 +3,16 @@ name: Tests
 on:
   pull_request:
     branches: [main]
+    paths:
+      - "archetypax/**"
+      - "tests/**"
+      - "pyproject.toml"
   push:
     branches: [main]
+    paths:
+      - "archetypax/**"
+      - "tests/**"
+      - "pyproject.toml"
 
 jobs:
   test-py310:
