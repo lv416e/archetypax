@@ -390,7 +390,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             # Mix the extreme point with the original archetype to ensure stability
             # Use a higher weight for the extreme point to push towards the boundary
-            alpha = 1.0  # 0.8  # Weight for extreme point
+            alpha = 0.8  # Weight for extreme point
             projected = alpha * X[max_idx] + (1 - alpha) * archetype
 
             return projected
