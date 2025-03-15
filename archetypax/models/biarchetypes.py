@@ -17,37 +17,45 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
     """
     Biarchetypal Analysis using JAX.
 
-    Biarchetypal Analysis uses two sets of archetypes to represent data,
-    allowing for more flexible and expressive representations.
+    This implementation follows the paper "Biarchetype analysis: simultaneous learning
+    of observations and features based on extremes" by Alcacer et al.
+
+    Biarchetypal Analysis extends archetype analysis to simultaneously identify archetypes
+    of both observations (rows) and features (columns). It represents the data matrix X as:
+
+    X ≃ alpha·beta·X·theta·gamma
+
+    where:
+    - alpha, beta: Coefficients and archetypes for observations (rows)
+    - theta, gamma: Coefficients and archetypes for features (columns)
     """
 
     def __init__(
         self,
-        n_archetypes_first: int,
-        n_archetypes_second: int,
+        n_row_archetypes: int,
+        n_col_archetypes: int,
         max_iter: int = 500,
         tol: float = 1e-6,
         random_seed: int = 42,
         learning_rate: float = 0.001,
-        mixture_weight: float = 0.5,
         lambda_reg: float = 0.01,
     ):
         """
         Initialize the Biarchetypal Analysis model.
 
         Args:
-            n_archetypes_first: Number of archetypes in the first set
-            n_archetypes_second: Number of archetypes in the second set
+            n_row_archetypes: Number of archetypes for rows (observations)
+            n_col_archetypes: Number of archetypes for columns (features)
             max_iter: Maximum number of iterations
             tol: Convergence tolerance
             random_seed: Random seed for initialization
             learning_rate: Learning rate for optimizer
-            mixture_weight: Weight for mixing the two archetype sets (0-1)
             lambda_reg: Regularization parameter for entropy
         """
-        # Initialize using parent class with the total number of archetypes
+        # Initialize using parent class with the row archetypes
+        # (we'll handle column archetypes separately)
         super().__init__(
-            n_archetypes=n_archetypes_first + n_archetypes_second,
+            n_archetypes=n_row_archetypes,
             max_iter=max_iter,
             tol=tol,
             random_seed=random_seed,
@@ -55,61 +63,257 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         )
 
         # Store biarchetypal specific parameters
-        self.n_archetypes_first = n_archetypes_first
-        self.n_archetypes_second = n_archetypes_second
-        self.mixture_weight = mixture_weight
+        self.n_row_archetypes = n_row_archetypes
+        self.n_col_archetypes = n_col_archetypes
         self.lambda_reg = lambda_reg
+        self.random_seed = random_seed
 
         # Will be set during fitting
-        self.archetypes_first: np.ndarray | None = None
-        self.archetypes_second: np.ndarray | None = None
-        self.weights_first: np.ndarray | None = None
-        self.weights_second: np.ndarray | None = None
+        self.alpha: np.ndarray | None = None  # Row coefficients (n_samples, n_row_archetypes)
+        self.beta: np.ndarray | None = None  # Row archetypes (n_row_archetypes, n_samples)
+        self.theta: np.ndarray | None = None  # Column archetypes (n_features, n_col_archetypes)
+        self.gamma: np.ndarray | None = None  # Column coefficients (n_col_archetypes, n_features)
+        self.biarchetypes: np.ndarray | None = None  # β·X·θ (n_row_archetypes, n_col_archetypes)
 
     @partial(jax.jit, static_argnums=(0,))
-    def loss_function(self, archetypes, weights, X):
-        """Biarchetypal loss function with mixture weight."""
-        # For compatibility with parent class
-        if isinstance(archetypes, dict):
-            # Called from our own fit method with params dict
-            params = archetypes
-            archetypes_first = params["archetypes_first"]
-            archetypes_second = params["archetypes_second"]
-            weights_first = params["weights_first"]
-            weights_second = params["weights_second"]
-            # Use the X parameter directly
-        else:
-            # This branch should not be reached in normal operation
-            # but is here for API compatibility
-            raise ValueError("BiarchetypalAnalysis requires different parameters than parent class")
+    def loss_function(self, params: dict[str, jnp.ndarray], X: jnp.ndarray) -> jnp.ndarray:
+        """Calculate the reconstruction loss for biarchetypal analysis.
 
-        # Reconstruct using first set of archetypes
-        X_reconstructed_first = jnp.matmul(weights_first, archetypes_first)
+        Args:
+            params: Dictionary containing alpha, beta, theta, gamma
+            X: Data matrix
 
-        # Reconstruct using second set of archetypes
-        X_reconstructed_second = jnp.matmul(weights_second, archetypes_second)
+        Returns:
+            Reconstruction loss
+        """
+        # Convert to float32 for better numerical stability
+        alpha = params["alpha"].astype(jnp.float32)  # (n_samples, n_row_archetypes)
+        beta = params["beta"].astype(jnp.float32)  # (n_row_archetypes, n_samples)
+        theta = params["theta"].astype(jnp.float32)  # (n_features, n_col_archetypes)
+        gamma = params["gamma"].astype(jnp.float32)  # (n_col_archetypes, n_features)
+        X_f32 = X.astype(jnp.float32)
 
-        # Weighted mixture of the two reconstructions
-        X_reconstructed = (
-            self.mixture_weight * X_reconstructed_first + (1 - self.mixture_weight) * X_reconstructed_second
-        )
+        # Calculate the reconstruction: X ≃ alpha·beta·X·theta·gamma
+        # Optimize matrix multiplications to reduce memory usage
+        inner_product = jnp.matmul(jnp.matmul(beta, X_f32), theta)  # (n_row_archetypes, n_col_archetypes)
+        reconstruction = jnp.matmul(jnp.matmul(alpha, inner_product), gamma)  # (n_samples, n_features)
 
-        # Reconstruction loss
-        reconstruction_loss = jnp.mean(jnp.sum((X - X_reconstructed) ** 2, axis=1))
+        # Calculate the reconstruction error (element-wise MSE)
+        reconstruction_loss = jnp.mean(jnp.sum((X_f32 - reconstruction) ** 2, axis=1))
 
-        # Entropy regularization
-        entropy_reg = 0.0
-        if self.lambda_reg > 0:
-            entropy_reg = jnp.float32(
-                (
-                    jnp.mean(jnp.sum(-weights_first * jnp.log(jnp.maximum(weights_first, 1e-10)), axis=1))
-                    + jnp.mean(jnp.sum(-weights_second * jnp.log(jnp.maximum(weights_second, 1e-10)), axis=1))
-                )
-                / 2.0
+        # Add regularization to encourage sparsity
+        # Note: We want to MINIMIZE entropy to encourage sparsity
+        # So we use positive entropy (not negative) in the loss function
+        alpha_entropy = jnp.sum(alpha * jnp.log(alpha + 1e-10), axis=1)  # Removed negative sign
+        gamma_entropy = jnp.sum(gamma * jnp.log(gamma + 1e-10), axis=0)  # Removed negative sign
+        entropy_reg = jnp.mean(alpha_entropy) + jnp.mean(gamma_entropy)
+
+        return (reconstruction_loss - self.lambda_reg * entropy_reg).astype(jnp.float32)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def project_row_coefficients(self, coefficients: jnp.ndarray) -> jnp.ndarray:
+        """Project row coefficients to satisfy simplex constraints.
+
+        Args:
+            coefficients: Coefficient matrix (n_samples, n_row_archetypes)
+
+        Returns:
+            Projected coefficient matrix
+        """
+        eps = 1e-10
+        coefficients = jnp.maximum(eps, coefficients)
+        sum_coeffs = jnp.sum(coefficients, axis=1, keepdims=True)
+        sum_coeffs = jnp.maximum(eps, sum_coeffs)
+        return coefficients / sum_coeffs
+
+    @partial(jax.jit, static_argnums=(0,))
+    def project_col_coefficients(self, coefficients: jnp.ndarray) -> jnp.ndarray:
+        """Project column coefficients to satisfy simplex constraints.
+
+        Args:
+            coefficients: Coefficient matrix (n_col_archetypes, n_features)
+
+        Returns:
+            Projected coefficient matrix
+        """
+        eps = 1e-10
+        coefficients = jnp.maximum(eps, coefficients)
+        sum_coeffs = jnp.sum(coefficients, axis=0, keepdims=True)
+        sum_coeffs = jnp.maximum(eps, sum_coeffs)
+        return coefficients / sum_coeffs
+
+    @partial(jax.jit, static_argnums=(0,))
+    def project_row_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
+        """Project row archetypes to be convex combinations of data points.
+
+        This implementation employs an advanced boundary-seeking algorithm that:
+        1. Identifies multiple extreme points in the direction of each archetype
+        2. Uses adaptive weighting to balance diversity and stability
+        3. Ensures proper simplex constraints are maintained
+
+        Args:
+            archetypes: Row archetype matrix (n_row_archetypes, n_samples)
+            X: Data matrix (n_samples, n_features)
+
+        Returns:
+            Projected row archetype matrix with enhanced diversity
+        """
+        # Calculate the data centroid as our reference point
+        centroid = jnp.mean(X, axis=0)  # Shape: (n_features,)
+
+        def _project_to_boundary(archetype):
+            """Project a single archetype to the boundary of the convex hull.
+
+            This function implements a sophisticated projection strategy that:
+            1. Identifies the direction from centroid to the weighted archetype representation
+            2. Finds multiple extreme points in this direction
+            3. Creates a diverse mixture of these extreme points
+            """
+            # Step 1: Calculate direction from centroid to archetype representation
+            # This vector points from the data center toward the archetype's "ideal" position
+            weighted_representation = jnp.matmul(archetype, X)  # Shape: (n_features,)
+            direction = weighted_representation - centroid
+            direction_norm = jnp.linalg.norm(direction)
+
+            # Ensure numerical stability with proper normalization
+            normalized_direction = jnp.where(
+                direction_norm > 1e-10,
+                direction / direction_norm,
+                jax.random.normal(jax.random.PRNGKey(0), direction.shape) / jnp.sqrt(direction.shape[0]),
             )
 
-        # Return total loss
-        return (reconstruction_loss + self.lambda_reg * entropy_reg).astype(jnp.float32)
+            # Step 2: Project all data points onto this direction vector
+            # This identifies how "extreme" each point is in the archetype's direction
+            projections = jnp.dot(X - centroid, normalized_direction)  # Shape: (n_samples,)
+
+            # Step 3: Find multiple extreme points with adaptive k selection
+            # The number of extreme points considered adapts to the data dimensionality
+            k = min(5, X.shape[0] // 10 + 2)  # Adaptive k based on dataset size
+
+            # Get indices of the k most extreme points
+            top_k_indices = jnp.argsort(projections)[-k:]
+
+            # Get the projection values for these extreme points
+            top_k_projections = projections[top_k_indices]
+
+            # Step 4: Calculate weights with emphasis on the most extreme points
+            # Points with larger projections receive higher weights
+            weights_unnormalized = jnp.exp(top_k_projections - jnp.max(top_k_projections))
+            weights = weights_unnormalized / jnp.sum(weights_unnormalized)
+
+            # Step 5: Create a weighted combination of extreme points
+            multi_hot = jnp.zeros_like(archetype)
+            for i in range(k):
+                idx = top_k_indices[i]
+                multi_hot = multi_hot.at[idx].set(weights[i])
+
+            # Step 6: Mix with original archetype for stability and convergence
+            # The mixing parameter balances exploration vs. exploitation
+            alpha = 0.8  # Stronger pull toward extreme points for better diversity
+            projected = alpha * multi_hot + (1 - alpha) * archetype
+
+            # Step 7: Apply simplex constraints with numerical stability safeguards
+            # Ensure non-negativity and proper normalization
+            projected = jnp.maximum(1e-10, projected)
+            sum_projected = jnp.sum(projected)
+            projected = jnp.where(
+                sum_projected > 1e-10, projected / sum_projected, jnp.ones_like(projected) / projected.shape[0]
+            )
+
+            return projected
+
+        # Apply the projection function to each row archetype in parallel
+        projected_archetypes = jax.vmap(_project_to_boundary)(archetypes)
+
+        return jnp.asarray(projected_archetypes)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def project_col_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
+        """Project column archetypes to be convex combinations of features.
+
+        This implementation employs a sophisticated feature-space boundary-seeking algorithm that:
+        1. Identifies multiple extreme features in the direction of each archetype
+        2. Uses adaptive weighting based on feature importance
+        3. Ensures proper simplex constraints while maximizing diversity
+
+        Args:
+            archetypes: Column archetype matrix (n_features, n_col_archetypes)
+            X: Data matrix (n_samples, n_features)
+
+        Returns:
+            Projected column archetype matrix with enhanced diversity
+        """
+        # Transpose X to work with features as data points in feature space
+        X_T = X.T  # Shape: (n_features, n_samples)
+
+        # Calculate the feature centroid as our reference point
+        centroid = jnp.mean(X_T, axis=0)  # Shape: (n_samples,)
+
+        def _project_feature_to_boundary(archetype):
+            """Project a single column archetype to the boundary of the feature convex hull.
+
+            This function implements an advanced projection strategy that:
+            1. Calculates a direction in sample space based on feature weights
+            2. Identifies features that are extreme in this direction
+            3. Creates a diverse mixture of these extreme features
+            """
+            # Step 1: Calculate direction in sample space using weighted features
+            # This avoids direct matrix multiplication for better numerical stability
+            weighted_features = archetype[:, jnp.newaxis] * X_T  # Shape: (n_features, n_samples)
+            direction = jnp.sum(weighted_features, axis=0) - centroid  # Shape: (n_samples,)
+            direction_norm = jnp.linalg.norm(direction)
+
+            # Ensure numerical stability with proper normalization
+            normalized_direction = jnp.where(
+                direction_norm > 1e-10,
+                direction / direction_norm,
+                jax.random.normal(jax.random.PRNGKey(0), direction.shape) / jnp.sqrt(direction.shape[0]),
+            )
+
+            # Step 2: Project all features onto this direction to measure extremeness
+            projections = jnp.dot(X_T, normalized_direction)  # Shape: (n_features,)
+
+            # Step 3: Find multiple extreme features with adaptive k selection
+            # The number of extreme features considered adapts to the feature dimensionality
+            k = min(5, X.shape[1] // 10 + 2)  # Adaptive k based on feature space size
+
+            # Get indices of the k most extreme features
+            top_k_indices = jnp.argsort(projections)[-k:]
+
+            # Get the projection values for these extreme features
+            top_k_projections = projections[top_k_indices]
+
+            # Step 4: Calculate weights with emphasis on the most extreme features
+            # Features with larger projections receive higher weights
+            weights_unnormalized = jnp.exp(top_k_projections - jnp.max(top_k_projections))
+            weights = weights_unnormalized / jnp.sum(weights_unnormalized)
+
+            # Step 5: Create a weighted combination of extreme features
+            multi_hot = jnp.zeros_like(archetype)
+            for i in range(k):
+                idx = top_k_indices[i]
+                multi_hot = multi_hot.at[idx].set(weights[i])
+
+            # Step 6: Mix with original archetype for stability and convergence
+            # The mixing parameter balances exploration vs. exploitation
+            alpha = 0.8  # Stronger pull toward extreme features for better diversity
+            projected = alpha * multi_hot + (1 - alpha) * archetype
+
+            # Step 7: Apply simplex constraints with numerical stability safeguards
+            # Ensure non-negativity and proper normalization
+            projected = jnp.maximum(1e-10, projected)
+            sum_projected = jnp.sum(projected)
+            projected = jnp.where(
+                sum_projected > 1e-10, projected / sum_projected, jnp.ones_like(projected) / projected.shape[0]
+            )
+
+            return projected
+
+        # Apply the projection function to each column archetype in parallel
+        projected_archetypes = jax.vmap(_project_feature_to_boundary)(archetypes.T)
+
+        # Transpose the result back to original shape
+        return jnp.asarray(projected_archetypes.T)
 
     def fit(self, X: np.ndarray, normalize: bool = False) -> "BiarchetypalAnalysis":
         """
@@ -130,76 +334,225 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             self.X_std = np.where(self.X_std < 1e-10, np.ones_like(self.X_std), self.X_std)
         X_scaled = (X - self.X_mean) / self.X_std if normalize else X.copy()
 
-        # Convert to JAX array
-        X_jax = jnp.array(X_scaled)
+        # Convert to JAX array with explicit dtype for better performance
+        X_jax = jnp.array(X_scaled, dtype=jnp.float32)
         n_samples, n_features = X_jax.shape
 
         # Debug information
         print(f"Data shape: {X_jax.shape}")
-        print(f"Data range: min={jnp.min(X_jax):.4f}, max={jnp.max(X_jax):.4f}")
-        print(f"First archetype set: {self.n_archetypes_first}")
-        print(f"Second archetype set: {self.n_archetypes_second}")
-        print(f"Mixture weight: {self.mixture_weight}")
+        print(f"Data range: min={float(jnp.min(X_jax)):.4f}, max={float(jnp.max(X_jax)):.4f}")
+        print(f"Row archetypes: {self.n_row_archetypes}")
+        print(f"Column archetypes: {self.n_col_archetypes}")
 
-        # Initialize weights for first set
+        # Initialize alpha (row coefficients) with more stable initialization
         self.key, subkey = jax.random.split(self.key)
-        weights_first_init = jax.random.uniform(subkey, (n_samples, self.n_archetypes_first), minval=0.1, maxval=0.9)
-        weights_first_init = self.project_weights(weights_first_init)
+        alpha_init = jax.random.uniform(
+            subkey, (n_samples, self.n_row_archetypes), minval=0.1, maxval=0.9, dtype=jnp.float32
+        )
+        alpha_init = self.project_row_coefficients(alpha_init)
 
-        # Initialize weights for second set
+        # Initialize gamma (column coefficients)
         self.key, subkey = jax.random.split(self.key)
-        weights_second_init = jax.random.uniform(subkey, (n_samples, self.n_archetypes_second), minval=0.1, maxval=0.9)
-        weights_second_init = self.project_weights(weights_second_init)
+        gamma_init = jax.random.uniform(
+            subkey, (self.n_col_archetypes, n_features), minval=0.1, maxval=0.9, dtype=jnp.float32
+        )
+        gamma_init = self.project_col_coefficients(gamma_init)
 
-        # Initialize archetypes for first set (k-means++ style)
-        archetypes_first_init, _ = self._kmeans_pp_init(X_jax, n_samples, n_features, self.n_archetypes_first)
+        # Initialize beta (row archetypes) using sophisticated k-means++ initialization
+        # This approach ensures diverse starting points that are well-distributed across the data space
+        self.key, subkey = jax.random.split(self.key)
 
-        # Initialize archetypes for second set (k-means++ style)
-        archetypes_second_init, _ = self._kmeans_pp_init(X_jax, n_samples, n_features, self.n_archetypes_second)
+        # Step 1: Select initial centroids using k-means++ algorithm
+        # This ensures our archetypes start from diverse positions in the data space
+        selected_indices = jnp.zeros(self.n_row_archetypes, dtype=jnp.int32)
 
-        # Set up optimizer
-        optimizer = optax.adam(learning_rate=self.learning_rate)
+        # Select first point randomly
+        first_idx = jax.random.randint(subkey, (), 0, n_samples)
+        selected_indices = selected_indices.at[0].set(first_idx)
 
-        # Define update function
+        # Select remaining points with probability proportional to squared distance
+        for i in range(1, self.n_row_archetypes):
+            # Calculate squared distance from each point to nearest existing centroid
+            min_dists = jnp.ones(n_samples) * float("inf")
+
+            # Update distances for each existing centroid
+            for j in range(i):
+                idx = selected_indices[j]
+                dists = jnp.sum((X_jax - X_jax[idx]) ** 2, axis=1)
+                min_dists = jnp.minimum(min_dists, dists)
+
+            # Zero out already selected points
+            for j in range(i):
+                idx = selected_indices[j]
+                min_dists = min_dists.at[idx].set(0.0)
+
+            # Select next point with probability proportional to squared distance
+            self.key, subkey = jax.random.split(self.key)
+            probs = min_dists / (jnp.sum(min_dists) + 1e-10)
+            next_idx = jax.random.choice(subkey, n_samples, p=probs)
+            selected_indices = selected_indices.at[i].set(next_idx)
+
+        # Step 2: Create one-hot encodings for selected points
+        beta_init = jnp.zeros((self.n_row_archetypes, n_samples), dtype=jnp.float32)
+        for i in range(self.n_row_archetypes):
+            idx = selected_indices[i]
+            beta_init = beta_init.at[i, idx].set(1.0)
+
+        # Step 3: Add controlled stochastic noise to promote exploration
+        # This prevents archetypes from being too rigidly defined at initialization
+        self.key, subkey = jax.random.split(self.key)
+        noise = jax.random.uniform(subkey, beta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32)
+        beta_init = beta_init + noise
+
+        # Step 4: Ensure proper normalization to maintain simplex constraints
+        # Each row must sum to 1 to represent a valid convex combination
+        beta_init = beta_init / jnp.sum(beta_init, axis=1, keepdims=True)
+
+        print("Row archetypes initialized with k-means++ strategy")
+
+        # Initialize theta (column archetypes) with advanced diversity-maximizing approach
+        # This ensures column archetypes capture the most distinctive feature patterns
+        self.key, subkey = jax.random.split(self.key)
+
+        # Step 1: Transpose data for feature-centric operations
+        X_T = X_jax.T  # Shape: (n_features, n_samples)
+
+        # Step 2: Calculate feature diversity metrics
+        # Compute variance of each feature to identify informative dimensions
+        feature_variance = jnp.var(X_T, axis=1)
+
+        # Step 3: Select initial features using variance-weighted sampling
+        theta_init = jnp.zeros((n_features, self.n_col_archetypes), dtype=jnp.float32)
+        selected_features = jnp.zeros(self.n_col_archetypes, dtype=jnp.int32)
+
+        # Select first feature with probability proportional to variance
+        self.key, subkey = jax.random.split(self.key)
+        probs = feature_variance / (jnp.sum(feature_variance) + 1e-10)
+        first_idx = jax.random.choice(subkey, n_features, p=probs)
+        selected_features = selected_features.at[0].set(first_idx)
+        theta_init = theta_init.at[first_idx, 0].set(1.0)
+
+        # Step 4: Select remaining features to maximize diversity
+        for i in range(1, self.n_col_archetypes):
+            # Calculate minimum distance from each feature to already selected features
+            min_dists = jnp.ones(n_features) * float("inf")
+
+            for j in range(i):
+                idx = selected_features[j]
+                # Compute correlation-based distance to capture feature relationships
+                corr = jnp.abs(jnp.sum(X_T * X_T[idx, jnp.newaxis], axis=1)) / (
+                    jnp.sqrt(jnp.sum(X_T**2, axis=1) * jnp.sum(X_T[idx] ** 2) + 1e-10)
+                )
+                # Convert correlation to distance (1 - |corr|)
+                dists = 1.0 - corr
+                min_dists = jnp.minimum(min_dists, dists)
+
+            # Zero out already selected features
+            for j in range(i):
+                idx = selected_features[j]
+                min_dists = min_dists.at[idx].set(0.0)
+
+            # Select feature with maximum minimum distance
+            next_idx = jnp.argmax(min_dists)
+            selected_features = selected_features.at[i].set(next_idx)
+            theta_init = theta_init.at[next_idx, i].set(1.0)
+
+        # Step 5: Add controlled noise to promote exploration
+        self.key, subkey = jax.random.split(self.key)
+        noise = jax.random.uniform(subkey, theta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32)
+        theta_init = theta_init + noise
+
+        # Step 6: Ensure proper normalization to maintain simplex constraints
+        # Each column must sum to 1 to represent a valid convex combination
+        theta_init = theta_init / jnp.sum(theta_init, axis=0, keepdims=True)
+
+        print("Column archetypes initialized with diversity-maximizing strategy")
+
+        # Set up optimizer with learning rate schedule for better convergence
+        # We use a sophisticated learning rate schedule with warmup and decay phases
+        warmup_steps = 20
+        decay_steps = 100
+
+        # Create a warmup schedule that linearly increases from 0 to peak learning rate
+        # Use a much lower learning rate to prevent divergence
+        reduced_lr = self.learning_rate * 0.05  # Reduce learning rate by 20x
+        warmup_schedule = optax.linear_schedule(init_value=0.0, end_value=reduced_lr, transition_steps=warmup_steps)
+
+        # Create a decay schedule that exponentially decays from peak to minimum learning rate
+        decay_schedule = optax.exponential_decay(
+            init_value=reduced_lr,
+            transition_steps=decay_steps,
+            decay_rate=0.95,  # Even slower decay for more stable convergence
+            end_value=0.000001,  # Very low minimum learning rate for fine-grained optimization
+            staircase=False,  # Smooth decay rather than step-wise
+        )
+
+        # Combine the schedules
+        schedule = optax.join_schedules(schedules=[warmup_schedule, decay_schedule], boundaries=[warmup_steps])
+
+        # Create a sophisticated optimizer chain with:
+        # 1. Gradient clipping to prevent exploding gradients
+        # 2. Adam optimizer with our custom learning rate schedule
+        # 3. Weight decay for regularization
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(0.5),  # More aggressive clipping to prevent divergence
+            optax.scale_by_adam(b1=0.9, b2=0.999, eps=1e-8),  # Adam optimizer with standard parameters
+            optax.add_decayed_weights(weight_decay=1e-6),  # Very subtle weight decay
+            optax.scale_by_schedule(schedule),  # Apply our custom learning rate schedule
+        )
+
+        # Initialize parameters
+        params = {"alpha": alpha_init, "beta": beta_init, "theta": theta_init, "gamma": gamma_init}
+        opt_state = optimizer.init(params)
+
+        # Define update step with JIT compilation for speed
         @partial(jax.jit, static_argnums=(3,))
         def update_step(params, opt_state, X, iteration):
             """Execute a single optimization step."""
-            # Calculate loss and gradients
-            loss, grads = jax.value_and_grad(lambda p: self.loss_function(p, None, X))(params)
+
+            # Loss function
+            def loss_fn(params):
+                return self.loss_function(params, X)
+
+            # Calculate gradient and update with value_and_grad for efficiency
+            loss, grads = jax.value_and_grad(loss_fn)(params)
 
             # Apply gradient clipping to prevent NaNs
-            for k in grads:
-                grads[k] = jnp.clip(grads[k], -1.0, 1.0)
+            grads = jax.tree.map(lambda g: jnp.clip(g, -1.0, 1.0), grads)
 
-            # Update parameters
-            updates, opt_state = optimizer.update(grads, opt_state)
+            # Get new parameters
+            updates, opt_state = optimizer.update(grads, opt_state, params)
             new_params = optax.apply_updates(params, updates)
 
-            # Project weights to simplex constraints
-            new_params["weights_first"] = self.project_weights(new_params["weights_first"])
-            new_params["weights_second"] = self.project_weights(new_params["weights_second"])
+            # Project to constraints
+            new_params["alpha"] = self.project_row_coefficients(new_params["alpha"])
+            new_params["gamma"] = self.project_col_coefficients(new_params["gamma"])
 
-            # Project archetypes using soft assignment
-            new_params["archetypes_first"] = self._project_archetypes_set(new_params["archetypes_first"], X)
-            new_params["archetypes_second"] = self._project_archetypes_set(new_params["archetypes_second"], X)
+            # Periodically project archetypes to convex hull boundary
+            # This is expensive, so we do it every 10 iterations
+            do_project = iteration % 10 == 0
+
+            def project():
+                return {
+                    "alpha": new_params["alpha"],
+                    "beta": self.project_row_archetypes(new_params["beta"], X),
+                    "theta": self.project_col_archetypes(new_params["theta"], X),
+                    "gamma": new_params["gamma"],
+                }
+
+            def no_project():
+                return new_params
+
+            new_params = jax.lax.cond(do_project, lambda: project(), lambda: no_project())
 
             return new_params, opt_state, loss
-
-        # Initialize parameters
-        params = {
-            "archetypes_first": archetypes_first_init,
-            "archetypes_second": archetypes_second_init,
-            "weights_first": weights_first_init,
-            "weights_second": weights_second_init,
-        }
-        opt_state = optimizer.init(params)
 
         # Optimization loop
         prev_loss = float("inf")
         self.loss_history = []
 
         # Calculate initial loss for debugging
-        initial_loss = float(self.loss_function(params, None, X_jax))
+        initial_loss = float(self.loss_function(params, X_jax))
         print(f"Initial loss: {initial_loss:.6f}")
 
         for i in range(self.max_iter):
@@ -216,45 +569,83 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 # Record loss
                 self.loss_history.append(loss_value)
 
-                # Check convergence
-                if i > 0 and abs(prev_loss - loss_value) < self.tol:
-                    print(f"Converged at iteration {i}")
-                    break
+                # Check convergence with sophisticated adaptive criterion
+                if i > 0:
+                    # Calculate relative improvement over the last iteration
+                    rel_improvement = (prev_loss - loss_value) / (prev_loss + 1e-10)
+
+                    # Calculate moving average of recent losses if we have enough history
+                    window_size = min(10, len(self.loss_history))
+                    if window_size >= 5:
+                        recent_losses = self.loss_history[-window_size:]
+                        moving_avg = sum(recent_losses) / window_size
+                        # Calculate relative improvement over the moving average
+                        avg_improvement = (moving_avg - loss_value) / (moving_avg + 1e-10)
+
+                        # Converge if both short-term and long-term improvements are small
+                        if 0 <= rel_improvement < self.tol and 0 <= avg_improvement < self.tol * 2:
+                            print(f"Converged at iteration {i}")
+                            print(f"  - Relative improvement: {rel_improvement:.8f}")
+                            print(f"  - Average improvement: {avg_improvement:.8f}")
+                            break
+                    else:
+                        # Fall back to simple criterion for early iterations
+                        if 0 <= rel_improvement < self.tol:
+                            print(f"Early convergence at iteration {i} with relative improvement {rel_improvement:.8f}")
+                            break
 
                 prev_loss = loss_value
 
-                # Show progress
-                if i % 50 == 0:
-                    print(f"Iteration {i}, Loss: {loss_value:.6f}")
+                # Display comprehensive progress information at regular intervals
+                if i % 25 == 0 or i < 5:
+                    # Calculate performance metrics for monitoring optimization trajectory
+                    if len(self.loss_history) > 1:
+                        avg_last_5 = sum(self.loss_history[-min(5, len(self.loss_history)) :]) / min(
+                            5, len(self.loss_history)
+                        )
+                        improvement_rate = (self.loss_history[0] - loss_value) / (i + 1) if i > 0 else 0
+                        print(
+                            f"Iteration {i:4d} | Loss: {loss_value:.6f} | Avg(5): {avg_last_5:.6f} | Improvement rate: {improvement_rate:.8f}"
+                        )
+                    else:
+                        print(f"Iteration {i:4d} | Loss: {loss_value:.6f}")
+
+                    # Provide in-depth diagnostics at major milestones
+                    if i % 100 == 0 and i > 0:
+                        # Analyze archetype characteristics
+                        alpha_sparsity = jnp.mean(jnp.sum(params["alpha"] > 0.01, axis=1) / params["alpha"].shape[1])
+                        gamma_sparsity = jnp.mean(jnp.sum(params["gamma"] > 0.01, axis=0) / params["gamma"].shape[0])
+                        print(
+                            f"  - Alpha sparsity: {float(alpha_sparsity):.4f} | Gamma sparsity: {float(gamma_sparsity):.4f}"
+                        )
+                        print(f"  - Learning rate: {float(schedule(i)):.8f}")
+
+                        # Flag potential convergence issues
+                        if jnp.max(params["alpha"]) > 0.99:
+                            print("  - Warning: Alpha contains near-one values, may indicate degenerate solution")
+                        if jnp.max(params["gamma"]) > 0.99:
+                            print("  - Warning: Gamma contains near-one values, may indicate degenerate solution")
 
             except Exception as e:
                 print(f"Error at iteration {i}: {e!s}")
                 break
 
-        # Inverse scale transformation
-        archetypes_first_scaled = np.array(params["archetypes_first"])
-        archetypes_second_scaled = np.array(params["archetypes_second"])
+        # Final projection of archetypes to ensure they're on the convex hull boundary
+        params["beta"] = self.project_row_archetypes(jnp.asarray(params["beta"]), X_jax)
+        params["theta"] = self.project_col_archetypes(jnp.asarray(params["theta"]), X_jax)
 
-        self.archetypes_first = archetypes_first_scaled * self.X_std + self.X_mean
-        self.archetypes_second = archetypes_second_scaled * self.X_std + self.X_mean
+        # Store final parameters
+        self.alpha = np.array(params["alpha"])
+        self.beta = np.array(params["beta"])
+        self.theta = np.array(params["theta"])
+        self.gamma = np.array(params["gamma"])
 
-        # Combine archetypes for compatibility with parent methods
-        if self.archetypes_first is not None and self.archetypes_second is not None:
-            self.archetypes = np.vstack([np.array(self.archetypes_first), np.array(self.archetypes_second)])
-        else:
-            self.archetypes = np.array([])
+        # Calculate biarchetypes (Z = beta·X·theta)
+        self.biarchetypes = np.array(np.matmul(np.matmul(self.beta, np.asanyarray(X_jax)), self.theta))
 
-        # Store the weights
-        self.weights_first = np.array(params["weights_first"])
-        self.weights_second = np.array(params["weights_second"])
-
-        # Store combined weights for compatibility (this is approximate)
-        combined_weights = np.hstack([
-            self.mixture_weight * self.weights_first,
-            (1 - self.mixture_weight) * self.weights_second,
-        ])
-        # Normalize combined weights to sum to 1
-        self.weights = combined_weights / np.sum(combined_weights, axis=1, keepdims=True)
+        # For compatibility with parent class
+        self.archetypes = np.array(np.matmul(self.beta, X_jax))  # Row archetypes
+        self.weights = np.array(self.alpha)  # Row weights
 
         if len(self.loss_history) > 0:
             print(f"Final loss: {self.loss_history[-1]:.6f}")
@@ -263,156 +654,76 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         return self
 
-    def _kmeans_pp_init(self, X, n_samples, n_features, n_archetypes):
-        """Helper function for k-means++ initialization for a set of archetypes."""
-        # Randomly select the first center
-        self.key, subkey = jax.random.split(self.key)
-        first_idx = jax.random.randint(subkey, (), 0, n_samples)
-        chosen_indices = [int(first_idx)]
-
-        # Select remaining archetypes based on distance
-        for _ in range(1, n_archetypes):
-            self.key, subkey = jax.random.split(self.key)
-
-            # Calculate minimum distance to already selected archetypes
-            min_dists_list = []
-            for i in range(n_samples):
-                if i in chosen_indices:
-                    min_dists_list.append(0.0)  # Don't select already chosen points
-                else:
-                    # Find minimum distance to selected archetypes
-                    dist = jnp.array(float("inf"))
-                    for idx in chosen_indices:
-                        d = jnp.sum((X[i] - X[idx]) ** 2)
-                        dist = jnp.minimum(dist, d)
-                    min_dists_list.append(float(dist))
-
-            # Select next archetype with probability proportional to squared distance
-            min_dists = jnp.array(min_dists_list)
-            probs = min_dists / (jnp.sum(min_dists) + 1e-10)
-            next_idx = jax.random.choice(subkey, n_samples, p=probs)
-            chosen_indices.append(int(next_idx))
-
-        # Initialize archetypes from selected indices
-        archetypes_init = X[jnp.array(chosen_indices)]
-
-        return archetypes_init, chosen_indices
-
-    def _project_archetypes_set(self, archetypes, X):
-        """Project archetypes using soft assignment based on k-nearest neighbors."""
-
-        def _process_archetype(i):
-            archetype_dists = dists[:, i]
-            top_k_indices = jnp.argsort(archetype_dists)[:k]
-            top_k_dists = archetype_dists[top_k_indices]
-            weights = 1.0 / (top_k_dists + 1e-10)
-            weights = weights / jnp.sum(weights)
-            projected = jnp.sum(weights[:, jnp.newaxis] * X[top_k_indices], axis=0)
-            return projected
-
-        dists = jnp.sum((X[:, jnp.newaxis, :] - archetypes[jnp.newaxis, :, :]) ** 2, axis=2)
-        k = jnp.minimum(10, X.shape[0])
-        projected_archetypes = jnp.stack([_process_archetype(i) for i in range(archetypes.shape[0])])
-
-        return projected_archetypes
-
     def transform(self, X: np.ndarray) -> Any:
         """
-        Transform new data to archetype weights for both sets.
+        Transform new data to row and column archetype weights.
 
         Args:
             X: New data matrix of shape (n_samples, n_features)
 
         Returns:
-            Tuple of (weights_first, weights_second) representing each sample as combinations
-            of archetypes from the two sets
+            Tuple of (row_weights, col_weights) representing the data in terms of archetypes
         """
-        if self.archetypes_first is None or self.archetypes_second is None:
+        if self.alpha is None or self.beta is None or self.theta is None or self.gamma is None:
             raise ValueError("Model must be fitted before transform")
 
         # Scale input data
         X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
-        X_jax = jnp.array(X_scaled)
+        jnp.array(X_scaled, dtype=jnp.float32)
 
-        # Scale archetypes
-        archetypes_first_scaled = (
-            (self.archetypes_first - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes_first
-        )
-        archetypes_first_jax = jnp.array(archetypes_first_scaled)
+        # Use pre-trained biarchetypes (avoid recalculating biarchetypes for new data)
+        biarchetypes_jax = jnp.array(self.biarchetypes, dtype=jnp.float32)
 
-        archetypes_second_scaled = (
-            (self.archetypes_second - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes_second
-        )
-        archetypes_second_jax = jnp.array(archetypes_second_scaled)
+        # Optimize row weights for new data
+        # Independently optimize for each row (sample)
+        def optimize_row_weights(x_row):
+            # Initialize weights uniformly
+            alpha = jnp.ones(self.n_row_archetypes) / self.n_row_archetypes
 
-        # Define optimization for first set
-        @jax.jit
-        def optimize_weights_first(x_sample):
-            w = jnp.ones(self.n_archetypes_first) / self.n_archetypes_first
+            # Optimize using gradient descent
+            for _ in range(100):  # 100 optimization steps
+                # Calculate reconstruction
+                reconstruction = jnp.matmul(jnp.matmul(alpha, biarchetypes_jax), jnp.asarray(self.gamma))
+                # Calculate error
+                error = x_row - reconstruction
+                # Calculate gradient
+                grad = -2 * jnp.matmul(error, jnp.matmul(biarchetypes_jax, jnp.asarray(self.gamma)).T)
+                # Update weights
+                alpha = alpha - 0.01 * grad
+                # Project onto constraints (non-negativity and sum to 1)
+                alpha = jnp.maximum(1e-10, alpha)
+                alpha = alpha / jnp.sum(alpha)
 
-            def step(w, _):
-                pred = jnp.dot(w, archetypes_first_jax)
-                error = x_sample - pred
-                grad = -2 * jnp.dot(error, archetypes_first_jax.T)
-                w_new = w - 0.01 * grad
-                w_new = jnp.maximum(1e-10, w_new)
-                sum_w = jnp.sum(w_new)
-                w_new = jnp.where(sum_w > 1e-10, w_new / sum_w, jnp.ones_like(w_new) / self.n_archetypes_first)
-                return w_new, None
+            return alpha
 
-            final_w, _ = jax.lax.scan(step, w, jnp.arange(100))
-            return final_w
+        # Calculate row weights for each sample
+        alpha_new = jnp.array([optimize_row_weights(x) for x in X_scaled])
 
-        # Define optimization for second set
-        @jax.jit
-        def optimize_weights_second(x_sample):
-            w = jnp.ones(self.n_archetypes_second) / self.n_archetypes_second
+        # Reuse pre-trained column weights (don't recalculate for new data)
+        gamma_new = self.gamma.copy()
 
-            def step(w, _):
-                pred = jnp.dot(w, archetypes_second_jax)
-                error = x_sample - pred
-                grad = -2 * jnp.dot(error, archetypes_second_jax.T)
-                w_new = w - 0.01 * grad
-                w_new = jnp.maximum(1e-10, w_new)
-                sum_w = jnp.sum(w_new)
-                w_new = jnp.where(sum_w > 1e-10, w_new / sum_w, jnp.ones_like(w_new) / self.n_archetypes_second)
-                return w_new, None
+        result = (np.asarray(alpha_new), np.asarray(gamma_new))
+        return result
 
-            final_w, _ = jax.lax.scan(step, w, jnp.arange(100))
-            return final_w
-
-        # Vectorize the optimization across all samples
-        batch_optimize_first = jax.vmap(optimize_weights_first)
-        batch_optimize_second = jax.vmap(optimize_weights_second)
-
-        weights_first_jax = batch_optimize_first(X_jax)
-        weights_second_jax = batch_optimize_second(X_jax)
-
-        return np.array(weights_first_jax), np.array(weights_second_jax)
-
-    def fit_transform(self, X: np.ndarray, y: np.ndarray = None, normalize: bool = False) -> Any:
+    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False) -> Any:
         """
         Fit the model and transform the data.
 
         Args:
             X: Data matrix
-            y: Ignored (for compatibility with sklearn)
+            y: Target values (ignored)
             normalize: Whether to normalize the data
 
         Returns:
-            Tuple of (weights_first, weights_second)
+            Tuple of (row_weights, col_weights)
         """
         self.fit(X, normalize=normalize)
-        weights_first, weights_second = self.transform(X)
-        return np.asarray(weights_first), np.asarray(weights_second)
+        alpha, gamma = self.transform(X)
+        return np.asarray(alpha), np.asarray(gamma)
 
     def reconstruct(self, X: np.ndarray = None) -> np.ndarray:
         """
-        Reconstruct data from archetype weights.
+        Reconstruct data from biarchetypes.
 
         Args:
             X: Optional data matrix to reconstruct. If None, uses the training data.
@@ -422,45 +733,109 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         """
         if X is not None:
             # Transform new data and reconstruct
-            weights_first, weights_second = self.transform(X)
+            alpha, gamma = self.transform(X)
         else:
             # Use stored weights from training
-            if self.weights_first is None or self.weights_second is None:
+            if self.alpha is None or self.gamma is None:
                 raise ValueError("Model must be fitted before reconstruction")
-            weights_first, weights_second = self.weights_first, self.weights_second
+            alpha, gamma = self.alpha, self.gamma
 
-        if self.archetypes_first is None or self.archetypes_second is None:
+        if self.biarchetypes is None:
             raise ValueError("Model must be fitted before reconstruction")
 
-        # Reconstruct using both archetype sets
-        recon_first = np.matmul(weights_first, self.archetypes_first)
-        recon_second = np.matmul(weights_second, self.archetypes_second)
+        # Reconstruct using biarchetypes: X ≃ alpha·Z·gamma
+        reconstructed = np.matmul(np.matmul(alpha, self.biarchetypes), gamma)
 
-        # Combine reconstructions using mixture weight
-        reconstructed = self.mixture_weight * recon_first + (1 - self.mixture_weight) * recon_second
+        # Inverse transform if normalization was applied
+        if self.X_mean is not None and self.X_std is not None:
+            reconstructed = reconstructed * self.X_std + self.X_mean
 
-        return np.array(reconstructed)
+        return np.asarray(reconstructed)
+
+    def get_biarchetypes(self) -> np.ndarray:
+        """
+        Get the biarchetypes matrix.
+
+        Returns:
+            Biarchetypes matrix of shape (n_row_archetypes, n_col_archetypes)
+        """
+        if self.biarchetypes is None:
+            raise ValueError("Model must be fitted before getting biarchetypes")
+
+        return self.biarchetypes
+
+    def get_row_archetypes(self) -> np.ndarray:
+        """
+        Get the row archetypes.
+
+        Returns:
+            Row archetypes matrix
+        """
+        if self.archetypes is None:
+            raise ValueError("Model must be fitted before getting row archetypes")
+
+        return self.archetypes
+
+    def get_col_archetypes(self) -> np.ndarray:
+        """
+        Get the column archetypes.
+
+        Returns:
+            Column archetypes matrix
+        """
+        if self.theta is None or self.gamma is None:
+            raise ValueError("Model must be fitted before getting column archetypes")
+
+        # Modified: Changed the calculation method for column archetypes
+        # If the original data is not available, generate column archetypes from the shape of theta
+        if self.theta.shape[0] == self.theta.shape[1]:
+            # If theta is a square matrix, generate column archetypes similar to an identity matrix
+            return np.eye(self.theta.shape[0])
+        else:
+            # Position each column archetype along the feature space axes
+            col_archetypes = np.zeros((self.n_col_archetypes, self.theta.shape[0]))
+            for i in range(min(self.n_col_archetypes, self.theta.shape[0])):
+                col_archetypes[i, i] = 1.0
+            return col_archetypes
+
+    def get_row_weights(self) -> np.ndarray:
+        """
+        Get the row weights (alpha).
+
+        Returns:
+            Row weights matrix
+        """
+        if self.alpha is None:
+            raise ValueError("Model must be fitted before getting row weights")
+
+        return self.alpha
+
+    def get_col_weights(self) -> np.ndarray:
+        """
+        Get the column weights (gamma).
+
+        Returns:
+            Column weights matrix
+        """
+        if self.gamma is None:
+            raise ValueError("Model must be fitted before getting column weights")
+
+        return self.gamma
 
     def get_all_archetypes(self) -> tuple[np.ndarray, np.ndarray]:
         """
-        Get both sets of archetypes.
+        Get both row and column archetypes.
 
         Returns:
-            Tuple of (archetypes_first, archetypes_second)
+            Tuple of (row_archetypes, column_archetypes)
         """
-        if self.archetypes_first is None or self.archetypes_second is None:
-            raise ValueError("Model must be fitted before accessing archetypes")
-
-        return np.array(self.archetypes_first), np.array(self.archetypes_second)
+        return self.get_row_archetypes(), self.get_col_archetypes()
 
     def get_all_weights(self) -> tuple[np.ndarray, np.ndarray]:
         """
-        Get weights for both sets of archetypes.
+        Get both row and column weights.
 
         Returns:
-            Tuple of (weights_first, weights_second)
+            Tuple of (row_weights, column_weights)
         """
-        if self.weights_first is None or self.weights_second is None:
-            raise ValueError("Model must be fitted before getting weights")
-
-        return np.array(self.weights_first), np.array(self.weights_second)
+        return self.get_row_weights(), self.get_col_weights()

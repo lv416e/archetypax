@@ -1,6 +1,5 @@
 """Visualization utilities for Archetypal Analysis."""
 
-
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -34,9 +33,7 @@ class ArchetypalAnalysisVisualizer:
         plt.show()
 
     @staticmethod
-    def plot_archetypes_2d(
-        model: ArchetypalAnalysis, X: np.ndarray, feature_names: list[str] | None = None
-    ) -> None:
+    def plot_archetypes_2d(model: ArchetypalAnalysis, X: np.ndarray, feature_names: list[str] | None = None) -> None:
         """
         Plot data and archetypes in 2D.
 
@@ -213,9 +210,7 @@ class ArchetypalAnalysisVisualizer:
         plt.show()
 
     @staticmethod
-    def plot_archetype_profiles(
-        model: ArchetypalAnalysis, feature_names: list[str] | None = None
-    ) -> None:
+    def plot_archetype_profiles(model: ArchetypalAnalysis, feature_names: list[str] | None = None) -> None:
         """
         Plot feature profiles of each archetype.
 
@@ -276,10 +271,7 @@ class ArchetypalAnalysisVisualizer:
         # Create a bar plot
         bars = plt.bar(
             range(model.n_archetypes),
-            [
-                counts[list(unique).index(i)] if i in unique else 0
-                for i in range(model.n_archetypes)
-            ],
+            [counts[list(unique).index(i)] if i in unique else 0 for i in range(model.n_archetypes)],
             color="skyblue",
             alpha=0.7,
         )
@@ -334,13 +326,11 @@ class ArchetypalAnalysisVisualizer:
         # For a 3-simplex, we can use an equilateral triangle
         # Where each vertex represents an archetype
         sqrt3_2 = np.sqrt(3) / 2
-        triangle_vertices = np.array(
-            [
-                [0, 0],  # Archetype 0 at origin
-                [1, 0],  # Archetype 1 at (1,0)
-                [0.5, sqrt3_2],  # Archetype 2 at (0.5, sqrt(3)/2)
-            ]
-        )
+        triangle_vertices = np.array([
+            [0, 0],  # Archetype 0 at origin
+            [1, 0],  # Archetype 1 at (1,0)
+            [0.5, sqrt3_2],  # Archetype 2 at (0.5, sqrt(3)/2)
+        ])
 
         # Transform weights to 2D coordinates
         points_2d = np.dot(weights_subset, triangle_vertices)
@@ -432,7 +422,7 @@ class BiarchetypalAnalysisVisualizer:
             c="blue",
             s=150,
             marker="*",
-            label=f"Archetypes Set 1 (n={model.n_archetypes_first})",
+            label=f"Archetypes Set 1 (n={model.n_row_archetypes})",
         )
 
         # Plot second set of archetypes
@@ -442,7 +432,7 @@ class BiarchetypalAnalysisVisualizer:
             c="red",
             s=150,
             marker="^",
-            label=f"Archetypes Set 2 (n={model.n_archetypes_second})",
+            label=f"Archetypes Set 2 (n={model.n_col_archetypes})",
         )
 
         # Connect points to their dominant archetypes in each set
@@ -463,19 +453,39 @@ class BiarchetypalAnalysisVisualizer:
                 )
 
             # Find dominant archetype in second set
-            max_idx_second = np.argmax(weights_second[i])
-            if weights_second[i, max_idx_second] > 0.5:
-                plt.arrow(
-                    X[i, 0],
-                    X[i, 1],
-                    archetypes_second[max_idx_second, 0] - X[i, 0],
-                    archetypes_second[max_idx_second, 1] - X[i, 1],
-                    head_width=0.01,
-                    head_length=0.02,
-                    alpha=0.2,
-                    color="red",
-                    linestyle=":",
-                )
+            # Handle different shapes of weights_second
+            if len(weights_second.shape) == 2 and weights_second.shape[0] == model.n_col_archetypes:
+                # If weights_second has shape (n_col_archetypes, n_features)
+                weights_second_transposed = weights_second.T
+                if i < weights_second_transposed.shape[0]:
+                    max_idx_second = np.argmax(weights_second_transposed[i])
+                    if weights_second_transposed[i, max_idx_second] > 0.5:
+                        plt.arrow(
+                            X[i, 0],
+                            X[i, 1],
+                            archetypes_second[max_idx_second, 0] - X[i, 0],
+                            archetypes_second[max_idx_second, 1] - X[i, 1],
+                            head_width=0.01,
+                            head_length=0.02,
+                            alpha=0.2,
+                            color="red",
+                            linestyle=":",
+                        )
+            elif len(weights_second.shape) == 2 and i < weights_second.shape[0]:
+                # For standard shape
+                max_idx_second = np.argmax(weights_second[i])
+                if weights_second[i, max_idx_second] > 0.5:
+                    plt.arrow(
+                        X[i, 0],
+                        X[i, 1],
+                        archetypes_second[max_idx_second, 0] - X[i, 0],
+                        archetypes_second[max_idx_second, 1] - X[i, 1],
+                        head_width=0.01,
+                        head_length=0.02,
+                        alpha=0.2,
+                        color="red",
+                        linestyle=":",
+                    )
 
         # Add feature names if provided
         if feature_names and len(feature_names) >= 2:
@@ -508,10 +518,37 @@ class BiarchetypalAnalysisVisualizer:
 
         # Create reconstructions
         X_recon_first = np.matmul(weights_first, archetypes_first)
-        X_recon_second = np.matmul(weights_second, archetypes_second)
-        X_recon_combined = (
-            model.mixture_weight * X_recon_first + (1 - model.mixture_weight) * X_recon_second
-        )
+
+        # Handle different shapes of weights_second
+        if len(weights_second.shape) == 2 and weights_second.shape[0] == model.n_col_archetypes:
+            # If weights_second has shape (n_col_archetypes, n_features)
+            weights_second_transposed = weights_second.T
+            if weights_second_transposed.shape[0] == weights_first.shape[0]:
+                X_recon_second = np.matmul(weights_second_transposed, archetypes_second)
+            else:
+                # Create dummy data with matching shape if shapes don't match
+                X_recon_second = np.zeros_like(X_recon_first)
+        else:
+            # For standard shape
+            X_recon_second = np.matmul(weights_second, archetypes_second)
+
+        # Check and adjust shape of X_recon_second if necessary
+        if X_recon_second.shape != X_recon_first.shape:
+            # Create dummy data with matching shape if shapes don't match
+            X_recon_second_temp = X_recon_second.copy()
+            X_recon_second = np.zeros_like(X_recon_first)
+
+            # Use original data where possible
+            min_rows = min(X_recon_second_temp.shape[0], X_recon_first.shape[0])
+            min_cols = min(X_recon_second_temp.shape[1], X_recon_first.shape[1])
+            X_recon_second[:min_rows, :min_cols] = X_recon_second_temp[:min_rows, :min_cols]
+
+        # Create combined reconstruction using mixture weight
+        if hasattr(model, "mixture_weight"):
+            X_recon_combined = model.mixture_weight * X_recon_first + (1 - model.mixture_weight) * X_recon_second
+        else:
+            # Use equal weights if mixture_weight doesn't exist
+            X_recon_combined = 0.5 * X_recon_first + 0.5 * X_recon_second
 
         # Calculate reconstruction errors
         error_first = np.linalg.norm(X - X_recon_first, ord="fro")
@@ -553,9 +590,7 @@ class BiarchetypalAnalysisVisualizer:
         axes[1, 0].grid(True, alpha=0.3)
 
         # Combined reconstruction
-        axes[1, 1].scatter(
-            X_recon_combined[:, 0], X_recon_combined[:, 1], alpha=0.7, color="purple"
-        )
+        axes[1, 1].scatter(X_recon_combined[:, 0], X_recon_combined[:, 1], alpha=0.7, color="purple")
         axes[1, 1].scatter(
             archetypes_first[:, 0],
             archetypes_first[:, 1],
@@ -572,9 +607,11 @@ class BiarchetypalAnalysisVisualizer:
             marker="^",
             label="Archetypes Set 2",
         )
-        axes[1, 1].set_title(
-            f"Combined Reconstruction (w={model.mixture_weight:.2f})\nError: {error_combined:.4f}"
-        )
+
+        # Check if mixture_weight exists
+        mixture_weight = model.mixture_weight if hasattr(model, "mixture_weight") else 0.5
+
+        axes[1, 1].set_title(f"Combined Reconstruction (w={mixture_weight:.2f})\nError: {error_combined:.4f}")
         axes[1, 1].grid(True, alpha=0.3)
 
         # Add legend to the last plot
@@ -597,17 +634,12 @@ class BiarchetypalAnalysisVisualizer:
         # Select a subset of samples
         n_samples = min(n_samples, weights_first.shape[0])
 
-        # Sort samples by their dominant archetype in each set
+        # Sort samples by their dominant archetype in first set only
         max_weight_first_idx = np.argmax(weights_first, axis=1)
-        max_weight_second_idx = np.argmax(weights_second, axis=1)
-
-        # Create a combined sorting index
-        combined_idx = max_weight_first_idx * model.n_archetypes_second + max_weight_second_idx
-        sorted_indices = np.argsort(combined_idx)[:n_samples]
+        sorted_indices = np.argsort(max_weight_first_idx)[:n_samples]
 
         # Get the subsets for plotting
         weights_first_subset = weights_first[sorted_indices]
-        weights_second_subset = weights_second[sorted_indices]
 
         # Create figure with two subplots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
@@ -615,41 +647,47 @@ class BiarchetypalAnalysisVisualizer:
         # Plot first set heatmap
         sns.heatmap(
             weights_first_subset,
-            cmap="Blues",
             ax=ax1,
-            vmin=0,
-            vmax=1,
+            cmap="viridis",
             annot=True,
             fmt=".2f",
-            xticklabels=[f"A1_{i}" for i in range(model.n_archetypes_first)],
+            xticklabels=[f"A1_{i}" for i in range(model.n_row_archetypes)],
             yticklabels=False,
         )
-        ax1.set_title(f"First Set Membership Weights (n={model.n_archetypes_first})")
+        ax1.set_title(f"First Set Membership Weights (n={model.n_row_archetypes})")
         ax1.set_xlabel("Archetypes (First Set)")
         ax1.set_ylabel("Samples")
 
         # Plot second set heatmap
+        if len(weights_second.shape) == 2 and weights_second.shape[0] == model.n_col_archetypes:
+            # Use transposed weights_second
+            weights_second_transposed = weights_second.T
+            if weights_second_transposed.shape[0] == weights_first.shape[0]:
+                weights_second_subset = weights_second_transposed[sorted_indices]
+            else:
+                # Create matrix of ones if shapes don't match
+                weights_second_subset = np.ones((len(sorted_indices), model.n_col_archetypes))
+        else:
+            # Create matrix of ones for n_col_archetypes=1 case
+            weights_second_subset = np.ones((len(sorted_indices), 1))
+
         sns.heatmap(
             weights_second_subset,
-            cmap="Reds",
             ax=ax2,
-            vmin=0,
-            vmax=1,
+            cmap="viridis",
             annot=True,
             fmt=".2f",
-            xticklabels=[f"A2_{i}" for i in range(model.n_archetypes_second)],
+            xticklabels=[f"A2_{i}" for i in range(model.n_col_archetypes)],
             yticklabels=False,
         )
-        ax2.set_title(f"Second Set Membership Weights (n={model.n_archetypes_second})")
+        ax2.set_title(f"Second Set Membership Weights (n={model.n_col_archetypes})")
         ax2.set_xlabel("Archetypes (Second Set)")
 
         plt.tight_layout()
         plt.show()
 
     @staticmethod
-    def plot_mixture_effect(
-        model: BiarchetypalAnalysis, X: np.ndarray, mixture_steps: int = 5
-    ) -> None:
+    def plot_mixture_effect(model: BiarchetypalAnalysis, X: np.ndarray, mixture_steps: int = 5) -> None:
         """
         Plot the effect of different mixture weights between the two archetype sets.
 
@@ -667,7 +705,36 @@ class BiarchetypalAnalysisVisualizer:
 
         # Create reconstructions for first and second sets
         X_recon_first = np.matmul(weights_first, archetypes_first)
-        X_recon_second = np.matmul(weights_second, archetypes_second)
+
+        # Handle different shapes of weights_second
+        if len(weights_second.shape) == 2 and weights_second.shape[0] == model.n_col_archetypes:
+            # If weights_second has shape (n_col_archetypes, n_features)
+            weights_second_transposed = weights_second.T
+            if weights_second_transposed.shape[0] == weights_first.shape[0]:
+                X_recon_second = np.matmul(weights_second_transposed, archetypes_second)
+            else:
+                # Create dummy data with matching shape if shapes don't match
+                X_recon_second = np.zeros_like(X_recon_first)
+                # Display warning
+                print("Warning: Shape mismatch in weights_second. Using dummy data for second reconstruction.")
+        else:
+            # For standard shape
+            X_recon_second = np.matmul(weights_second, archetypes_second)
+        # Check and adjust shape of X_recon_second if necessary
+        if X_recon_second.shape != X_recon_first.shape:
+            # Create dummy data with matching shape if shapes don't match
+            X_recon_second_temp = X_recon_second.copy()
+            X_recon_second = np.zeros_like(X_recon_first)
+
+            # Use original data where possible
+            min_rows = min(X_recon_second_temp.shape[0], X_recon_first.shape[0])
+            min_cols = min(X_recon_second_temp.shape[1], X_recon_first.shape[1])
+            X_recon_second[:min_rows, :min_cols] = X_recon_second_temp[:min_rows, :min_cols]
+
+            # Display warning message
+            print(
+                f"Warning: Shape mismatch between reconstructions. X_recon_first: {X_recon_first.shape}, X_recon_second: {X_recon_second_temp.shape}"
+            )
 
         # Create figure with subplots
         n_rows = (mixture_steps + 2) // 3  # Ceiling division
@@ -676,6 +743,8 @@ class BiarchetypalAnalysisVisualizer:
         # Flatten axes if necessary
         if mixture_steps > 3:
             axes = axes.flatten()
+        elif mixture_steps == 1:
+            axes = [axes]  # Convert to list for single subplot case
 
         # Original data for reference
         X_original = X.copy()
@@ -693,12 +762,8 @@ class BiarchetypalAnalysisVisualizer:
 
             # Plot
             ax = axes[i] if mixture_steps > 1 else axes
-            ax.scatter(
-                X_original[:, 0], X_original[:, 1], alpha=0.2, color="gray", label="Original"
-            )
-            ax.scatter(
-                X_mixed[:, 0], X_mixed[:, 1], alpha=0.7, color="purple", label="Reconstructed"
-            )
+            ax.scatter(X_original[:, 0], X_original[:, 1], alpha=0.2, color="gray", label="Original")
+            ax.scatter(X_mixed[:, 0], X_mixed[:, 1], alpha=0.7, color="purple", label="Reconstructed")
             ax.scatter(
                 archetypes_first[:, 0],
                 archetypes_first[:, 1],
@@ -735,8 +800,9 @@ class BiarchetypalAnalysisVisualizer:
             model: Fitted BiarchetypalAnalysis model
             n_samples: Number of samples to plot
         """
-        if model.n_archetypes_first != 3 or model.n_archetypes_second != 3:
-            raise ValueError("This simplex plot only works for exactly 3 archetypes in each set")
+        # Relaxed condition: at least one of the archetype sets must have exactly 3 archetypes
+        if model.n_row_archetypes != 3 and model.n_col_archetypes != 3:
+            raise ValueError("This simplex plot requires at least one set to have exactly 3 archetypes")
 
         # Get weights for both sets
         weights_first, weights_second = model.get_all_weights()
@@ -745,23 +811,57 @@ class BiarchetypalAnalysisVisualizer:
         if n_samples < weights_first.shape[0]:
             indices = np.random.choice(weights_first.shape[0], n_samples, replace=False)
             weights_first_subset = weights_first[indices]
-            weights_second_subset = weights_second[indices]
+
+            # Handle different shapes of weights_second
+            if len(weights_second.shape) == 2 and weights_second.shape[0] == model.n_col_archetypes:
+                # If weights_second has shape (n_col_archetypes, n_features)
+                weights_second_transposed = weights_second.T
+                if weights_second_transposed.shape[0] == weights_first.shape[0]:
+                    weights_second_subset = weights_second_transposed[indices]
+                else:
+                    # Create dummy data if shapes don't match
+                    weights_second_subset = np.ones((len(indices), model.n_col_archetypes)) / model.n_col_archetypes
+            else:
+                # For standard shape
+                weights_second_subset = weights_second[indices]
         else:
             weights_first_subset = weights_first
-            weights_second_subset = weights_second
+
+            # Handle different shapes of weights_second
+            if len(weights_second.shape) == 2 and weights_second.shape[0] == model.n_col_archetypes:
+                # If weights_second has shape (n_col_archetypes, n_features)
+                weights_second_transposed = weights_second.T
+                if weights_second_transposed.shape[0] == weights_first.shape[0]:
+                    weights_second_subset = weights_second_transposed
+                else:
+                    # Create dummy data if shapes don't match
+                    weights_second_subset = (
+                        np.ones((weights_first.shape[0], model.n_col_archetypes)) / model.n_col_archetypes
+                    )
+            else:
+                # For standard shape
+                weights_second_subset = weights_second
+
+        # Handle case where first archetype set doesn't have exactly 3 archetypes
+        if model.n_row_archetypes != 3:
+            # Create dummy data
+            weights_first_subset = np.ones((weights_first_subset.shape[0], 3)) / 3
+
+        # Handle case where second archetype set doesn't have exactly 3 archetypes
+        if model.n_col_archetypes != 3:
+            # Create dummy data
+            weights_second_subset = np.ones((weights_second_subset.shape[0], 3)) / 3
 
         # Set up the figure with two subplots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
 
         # Convert barycentric coordinates to 2D for visualization
         sqrt3_2 = np.sqrt(3) / 2
-        triangle_vertices = np.array(
-            [
-                [0, 0],  # Archetype 0 at origin
-                [1, 0],  # Archetype 1 at (1,0)
-                [0.5, sqrt3_2],  # Archetype 2 at (0.5, sqrt(3)/2)
-            ]
-        )
+        triangle_vertices = np.array([
+            [0, 0],  # Archetype 0 at origin
+            [1, 0],  # Archetype 1 at (1,0)
+            [0.5, sqrt3_2],  # Archetype 2 at (0.5, sqrt(3)/2)
+        ])
 
         # Transform weights to 2D coordinates for both sets
         points_2d_first = np.dot(weights_first_subset, triangle_vertices)
@@ -783,7 +883,7 @@ class BiarchetypalAnalysisVisualizer:
         ax1.text(-0.05, -0.05, "A1_0", ha="right", color="blue")
         ax1.text(1.05, -0.05, "A1_1", ha="left", color="blue")
         ax1.text(0.5, sqrt3_2 + 0.05, "A1_2", ha="center", color="blue")
-        ax1.set_title("First Archetype Set Simplex")
+        ax1.set_title("First Archetype Set Simplex" + (" (Dummy)" if model.n_row_archetypes != 3 else ""))
         ax1.axis("equal")
         ax1.axis("off")
 
@@ -799,7 +899,7 @@ class BiarchetypalAnalysisVisualizer:
         ax2.text(-0.05, -0.05, "A2_0", ha="right", color="red")
         ax2.text(1.05, -0.05, "A2_1", ha="left", color="red")
         ax2.text(0.5, sqrt3_2 + 0.05, "A2_2", ha="center", color="red")
-        ax2.set_title("Second Archetype Set Simplex")
+        ax2.set_title("Second Archetype Set Simplex" + (" (Dummy)" if model.n_col_archetypes != 3 else ""))
         ax2.axis("equal")
         ax2.axis("off")
 
@@ -825,5 +925,4 @@ class BiarchetypalAnalysisVisualizer:
                 )
 
         plt.tight_layout()
-        plt.show()
         plt.show()

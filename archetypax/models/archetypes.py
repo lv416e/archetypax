@@ -13,6 +13,36 @@ from .base import ArchetypalAnalysis
 class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
     """Improved Archetypal Analysis model using JAX."""
 
+    def __init__(
+        self,
+        n_archetypes: int,
+        max_iter: int = 500,
+        tol: float = 1e-6,
+        random_seed: int = 42,
+        learning_rate: float = 0.001,
+    ):
+        """Initialize the Improved Archetypal Analysis model.
+
+        Args:
+            n_archetypes: Number of archetypes to find
+            max_iter: Maximum number of iterations
+            tol: Convergence tolerance
+            random_seed: Random seed for initialization
+            learning_rate: Learning rate for optimization
+        """
+        self.n_archetypes = n_archetypes
+        self.max_iter = max_iter
+        self.tol = tol
+        self.random_seed = random_seed
+        self.learning_rate = learning_rate
+        super().__init__(
+            n_archetypes=n_archetypes,
+            max_iter=max_iter,
+            tol=tol,
+            random_seed=random_seed,
+            learning_rate=learning_rate,
+        )
+
     def transform(self, X: np.ndarray) -> np.ndarray:
         """Transform new data to archetype weights using JAX."""
         if self.archetypes is None:
@@ -174,7 +204,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         return archetypes, chosen_indices
 
-    def fit(self, X: np.ndarray, normalize: bool = False):
+    def fit(self, X: np.ndarray, normalize: bool = False) -> "ImprovedArchetypalAnalysis":
         """Fit the model with improved k-means++ initialization."""
 
         @partial(jax.jit, static_argnums=(3))
@@ -195,6 +225,8 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             new_params["weights"] = self.project_weights(new_params["weights"])
             new_params["archetypes"] = self.project_archetypes(new_params["archetypes"], X_f32)
+            # new_params["archetypes"] = self.project_archetypes_convex_hull(new_params["archetypes"], X_f32)
+            # new_params["archetypes"] = self.project_archetypes_knn(new_params["archetypes"], X_f32)
             # new_params["archetypes"] = self.update_archetypes(new_params["archetypes"], new_params["weights"], X)
 
             new_params = jax.tree.map(lambda p: p.astype(jnp.float32), new_params)
@@ -298,7 +330,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         return self
 
-    def fit_transform(self, X: np.ndarray, y: np.ndarray = None, normalize: bool = False) -> np.ndarray:
+    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False) -> np.ndarray:
         """
         Fit the model and return the transformed data.
 
@@ -315,7 +347,167 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def project_archetypes(self, archetypes, X) -> jnp.ndarray:
-        """JIT-compiled archetype projection with static k value."""
+        """JIT-compiled archetype projection that pushes archetypes towards the convex hull boundary.
+
+        Instead of using k-NN which tends to pull archetypes inside the convex hull,
+        this implementation pushes archetypes towards the boundary of the convex hull
+        by finding extreme points in the direction of each archetype.
+
+        Technical details:
+        - Boundary Projection Approach: Projects data points along the direction from the
+          data centroid to each archetype, then identifies the most extreme point in that direction.
+          This effectively "pushes" archetypes toward the convex hull boundary rather than
+          pulling them inward.
+        - Stability Enhancement: Blends the original archetype with the extreme point using
+          a weighted average (80% extreme point, 20% original archetype) to prevent abrupt
+          changes and ensure optimization stability.
+
+        Args:
+            archetypes: Current archetype matrix
+            X: Original data matrix
+
+        Returns:
+            Projected archetype matrix positioned closer to the convex hull boundary
+        """
+        # Find the centroid of the data
+        centroid = jnp.mean(X, axis=0)
+
+        def _project_to_boundary(archetype):
+            # Direction from centroid to archetype
+            direction = archetype - centroid
+            direction_norm = jnp.linalg.norm(direction)
+
+            # Avoid division by zero
+            normalized_direction = jnp.where(
+                direction_norm > 1e-10, direction / direction_norm, jnp.zeros_like(direction)
+            )
+
+            # Project all points onto this direction
+            projections = jnp.dot(X - centroid, normalized_direction)
+
+            # Find the most extreme point in this direction
+            max_idx = jnp.argmax(projections)
+
+            # Mix the extreme point with the original archetype to ensure stability
+            # Use a higher weight for the extreme point to push towards the boundary
+            alpha = 0.8  # Weight for extreme point
+            projected = alpha * X[max_idx] + (1 - alpha) * archetype
+
+            return projected
+
+        # Apply the projection to each archetype
+        projected_archetypes = jax.vmap(_project_to_boundary)(archetypes)
+
+        return jnp.asarray(projected_archetypes)
+
+    # Alternative implementation that can be used for comparison or experimentation
+    @partial(jax.jit, static_argnums=(0,))
+    def project_archetypes_convex_hull(self, archetypes, X) -> jnp.ndarray:
+        """Alternative archetype projection that uses convex combinations of extreme points.
+
+        This method identifies potential extreme points and creates archetypes as
+        sparse convex combinations of these points, ensuring they lie on the boundary.
+
+        Technical details:
+        - Multi-directional Exploration: Generates multiple random directions around the
+          main archetype direction, allowing for more diverse extreme point discovery.
+        - Sparse Convex Combinations: Creates archetypes as weighted combinations of
+          extreme points found in different directions, with emphasis on the main direction.
+        - Boundary Positioning: By using convex combinations of extreme points, archetypes
+          are positioned on or near the convex hull boundary rather than in its interior.
+
+        This approach offers potentially better exploration of the convex hull boundary
+        at the cost of slightly higher computational complexity.
+
+        Args:
+            archetypes: Current archetype matrix
+            X: Original data matrix
+
+        Returns:
+            Projected archetype matrix positioned on the convex hull boundary
+        """
+        # Find the centroid of the data
+        centroid = jnp.mean(X, axis=0)
+
+        # For each archetype, find a set of extreme points
+        def _find_extreme_points(archetype):
+            # Generate multiple random directions around the archetype direction
+            key = jax.random.key(0)  # Fixed seed for deterministic behavior
+            n_directions = 5
+
+            # Direction from centroid to archetype
+            main_direction = archetype - centroid
+            main_direction_norm = jnp.linalg.norm(main_direction)
+
+            # Avoid division by zero
+            main_direction = jnp.where(
+                main_direction_norm > 1e-10,
+                main_direction / main_direction_norm,
+                jax.random.normal(key, shape=main_direction.shape),
+            )
+
+            # Generate random perturbations of the main direction
+            key, subkey = jax.random.split(key)
+            perturbations = jax.random.normal(subkey, shape=(n_directions, main_direction.shape[0]))
+
+            # Normalize the perturbations
+            perturbation_norms = jnp.linalg.norm(perturbations, axis=1, keepdims=True)
+            normalized_perturbations = perturbations / (perturbation_norms + 1e-10)
+
+            # Create directions as combinations of main direction and perturbations
+            directions = jnp.vstack([main_direction, normalized_perturbations * 0.3 + main_direction * 0.7])
+
+            # Normalize again
+            direction_norms = jnp.linalg.norm(directions, axis=1, keepdims=True)
+            directions = directions / (direction_norms + 1e-10)
+
+            # Find extreme points in each direction
+            extreme_indices = jnp.zeros(directions.shape[0], dtype=jnp.int32)
+
+            def _find_extreme(i, indices):
+                # Project all points onto this direction
+                projections = jnp.dot(X - centroid, directions[i])
+                # Find the most extreme point
+                max_idx = jnp.argmax(projections)
+                # Update the indices
+                return indices.at[i].set(max_idx)
+
+            extreme_indices = jax.lax.fori_loop(0, directions.shape[0], _find_extreme, extreme_indices)
+
+            # Get the extreme points
+            extreme_points = X[extreme_indices]
+
+            # Create a sparse convex combination of these extreme points
+            # with higher weight on the main direction's extreme point
+            weights = jnp.ones(extreme_points.shape[0]) / extreme_points.shape[0]
+            weights = weights.at[0].set(weights[0] * 2)  # Double weight for main direction
+            weights = weights / jnp.sum(weights)  # Normalize to sum to 1
+
+            projected = jnp.sum(weights[:, jnp.newaxis] * extreme_points, axis=0)
+
+            return projected
+
+        # Apply the projection to each archetype
+        projected_archetypes = jax.vmap(_find_extreme_points)(archetypes)
+
+        return jnp.asarray(projected_archetypes)
+
+    # Keep the original k-NN method for comparison
+    @partial(jax.jit, static_argnums=(0,))
+    def project_archetypes_knn(self, archetypes, X) -> jnp.ndarray:
+        """Original k-NN based archetype projection (kept for comparison).
+
+        This method tends to pull archetypes inside the convex hull due to its
+        averaging nature, which is suboptimal for archetypal analysis where
+        archetypes should ideally lie on the convex hull boundary.
+
+        Args:
+            archetypes: Current archetype matrix
+            X: Original data matrix
+
+        Returns:
+            Projected archetype matrix (typically positioned inside the convex hull)
+        """
 
         def _process_single_archetype(i):
             archetype_dists = dists[:, i]
