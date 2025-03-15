@@ -6,8 +6,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
+from ..models.archetypes import ImprovedArchetypalAnalysis
 from ..models.base import ArchetypalAnalysis
 from ..models.biarchetypes import BiarchetypalAnalysis
+from ..tools.evaluation import ArchetypalAnalysisEvaluator
 
 
 class ArchetypalAnalysisInterpreter:
@@ -24,13 +26,16 @@ class ArchetypalAnalysisInterpreter:
         Args:
             models_dict: Optional dictionary of {n_archetypes: model} pairs
         """
-        self.models_dict: dict[int, ArchetypalAnalysis] = models_dict or {}
-        self.results: dict[int, dict[str, Any]] = {}
+        self.models_dict: dict[int, ArchetypalAnalysis] | None = models_dict or None
+        self.results: dict[int, dict[str, Any]] | None = None
 
     def add_model(self, n_archetypes: int, model: ArchetypalAnalysis) -> "ArchetypalAnalysisInterpreter":
         """Add a fitted model to the interpreter."""
         if model.archetypes is None or model.weights is None:
             raise ValueError("Model must be fitted before adding to interpreter")
+
+        if self.models_dict is None:
+            self.models_dict = {}
 
         self.models_dict[n_archetypes] = model
         return self
@@ -79,7 +84,7 @@ class ArchetypalAnalysisInterpreter:
             if np.std(importance) > 1e-10:  # Standardize only if variance is non-zero
                 importance = (importance - np.mean(importance)) / np.std(importance)
 
-            # Calculate proportion of features above the specified percentile
+            # Calculate the proportion of features above a certain percentile
             threshold = np.percentile(importance, percentile)
             prominent_features = np.sum(importance >= threshold)
             sparsity_scores[i] = prominent_features / n_features
@@ -106,7 +111,87 @@ class ArchetypalAnalysisInterpreter:
             dominant_samples = np.sum(weights[:, i] >= threshold)
             purity_scores[i] = dominant_samples / n_samples
 
-        return purity_scores, float(np.mean(purity_scores))
+        return np.asarray(purity_scores), float(np.mean(purity_scores))
+
+    def information_gain(self, X: np.ndarray) -> list[tuple[int, float]]:
+        """
+        Calculate information gain when adding each additional archetype.
+
+        Args:
+            X: Original data matrix
+
+        Returns:
+            List of (n_archetypes, gain) pairs
+        """
+        if not self.models_dict:
+            raise ValueError("No models available for information gain calculation")
+
+        ks = sorted(self.models_dict.keys())
+        gains = []
+
+        for i in range(1, len(ks)):
+            prev_k = ks[i - 1]
+            curr_k = ks[i]
+
+            prev_error = self.models_dict[prev_k].reconstruct(X)
+            prev_error = np.mean(np.sum((X - prev_error) ** 2, axis=1))
+
+            curr_error = self.models_dict[curr_k].reconstruct(X)
+            curr_error = np.mean(np.sum((X - curr_error) ** 2, axis=1))
+
+            # Calculate error reduction rate (information gain)
+            gain = (prev_error - curr_error) / prev_error if prev_error > 0 else 0
+            gains.append((curr_k, gain))
+
+        return gains
+
+    def feature_consistency(
+        self, X: np.ndarray, n_archetypes: int, n_trials: int = 5, top_k: int = 5, random_seed: int = 42
+    ) -> np.ndarray:
+        """
+        Calculate feature importance consistency across multiple initializations.
+
+        Args:
+            X: Original data matrix
+            n_archetypes: Number of archetypes to evaluate
+            n_trials: Number of different initializations to try
+            top_k: Number of top features to consider
+            random_seed: Base random seed (will be incremented for each trial)
+
+        Returns:
+            Array of consistency scores for each archetype
+        """
+        importance_matrices = []
+
+        for i in range(n_trials):
+            model = ImprovedArchetypalAnalysis(n_archetypes=n_archetypes, random_seed=random_seed + i)
+            model.fit(X)
+
+            # Calculate feature importance matrix
+            evaluator = ArchetypalAnalysisEvaluator(model)
+            importance = evaluator.archetype_feature_importance().values
+
+            # Store feature importance rankings for each archetype
+            rankings = np.argsort(-importance, axis=1)
+            importance_matrices.append(rankings)
+
+        # Calculate consistency of top-K features
+        consistency_scores = np.zeros(n_archetypes)
+        top_k = min(top_k, X.shape[1])
+
+        for i in range(n_archetypes):
+            overlap_count = 0.0
+            for j in range(n_trials):
+                for k in range(j + 1, n_trials):
+                    set1 = set(importance_matrices[j][i, :top_k])
+                    set2 = set(importance_matrices[k][i, :top_k])
+                    overlap = len(set1.intersection(set2))
+                    overlap_count += overlap / top_k
+
+            total_comparisons = (n_trials * (n_trials - 1)) / 2
+            consistency_scores[i] = overlap_count / total_comparisons if total_comparisons > 0 else 0
+
+        return consistency_scores
 
     def evaluate_all_models(self, X: np.ndarray) -> dict[int, dict[str, Any]]:
         """
@@ -121,26 +206,29 @@ class ArchetypalAnalysisInterpreter:
         if not self.models_dict:
             raise ValueError("No models available for evaluation")
 
-        self.results = {}
+        if self.results is None:
+            self.results = {}
 
         for k, model in self.models_dict.items():
-            # Calculate various interpretability metrics
             if model.archetypes is None:
                 raise ValueError(f"Model with {k} archetypes must be fitted before evaluation")
 
-            distinctiveness = self.feature_distinctiveness(np.asarray(model.archetypes))
-            sparsity = self.sparsity_coefficient(np.asarray(model.archetypes))
-
             if model.weights is None:
-                raise ValueError(f"Model with {k} archetypes must have weights before evaluation")
+                raise ValueError(f"Model with {k} archetypes must be fitted before evaluation")
 
-            purity, avg_purity = self.cluster_purity(np.asarray(model.weights))
+            if k not in self.results:
+                self.results[k] = {}
+
+            # Calculate various interpretability metrics
+            distinctiveness = self.feature_distinctiveness(model.archetypes)
+            sparsity = self.sparsity_coefficient(model.archetypes)
+            purity, avg_purity = self.cluster_purity(model.weights)
 
             # Calculate average metrics
             avg_distinctiveness = np.mean(distinctiveness)
             avg_sparsity = np.mean(sparsity)
 
-            # Compute overall interpretability score (higher is better)
+            # Calculate overall interpretability score (higher is better)
             interpretability_score = (avg_distinctiveness + avg_sparsity + avg_purity) / 3
 
             self.results[k] = {
@@ -153,7 +241,148 @@ class ArchetypalAnalysisInterpreter:
                 "interpretability_score": interpretability_score,
             }
 
+        # Calculate information gain
+        try:
+            gains = self.information_gain(X)
+            for k, gain in gains:
+                if k in self.results:
+                    self.results[k]["information_gain"] = gain
+
+            # Evaluate balance between interpretability and information gain
+            for k in list(self.models_dict.keys())[1:]:  # Skip the first model
+                if "information_gain" in self.results[k]:
+                    gain = self.results[k]["information_gain"]
+                    interp = self.results[k]["interpretability_score"]
+
+                    # Calculate balance score using harmonic mean
+                    if gain + interp > 0:
+                        self.results[k]["balance_score"] = 2 * (gain * interp) / (gain + interp)
+                    else:
+                        self.results[k]["balance_score"] = 0
+        except Exception as e:
+            print(f"Warning: Could not compute information gain: {e}")
+
         return self.results
+
+    def suggest_optimal_archetypes(self, method: str = "balance") -> int:
+        """
+        Suggest optimal number of archetypes based on interpretability metrics.
+
+        Args:
+            method: Method to use for selection ('balance', 'interpretability', or 'information_gain')
+
+        Returns:
+            Optimal number of archetypes
+        """
+        if not self.results:
+            raise ValueError("Must run evaluate_all_models() first")
+
+        if self.models_dict is None:
+            raise ValueError("No models available for optimal archetype selection")
+
+        if method == "balance" and all("balance_score" in self.results[k] for k in list(self.models_dict.keys())[1:]):
+            scores = {k: self.results[k]["balance_score"] for k in list(self.models_dict.keys())[1:]}
+            best_k = max(scores, key=lambda k: scores[k])
+
+        elif method == "interpretability":
+            scores = {k: self.results[k]["interpretability_score"] for k in list(self.models_dict.keys())}
+            best_k = max(scores, key=lambda k: scores[k])
+
+        elif method == "information_gain" and all(
+            "information_gain" in self.results[k] for k in list(self.models_dict.keys())[1:]
+        ):
+            # Detect decay in information gain (elbow method)
+            ks = sorted(k for k in list(self.models_dict.keys()) if k > min(list(self.models_dict.keys())))
+            gains = [self.results[k]["information_gain"] for k in ks]
+
+            # Calculate differences in information gain
+            gain_diffs = np.diff(gains)
+            if len(gain_diffs) > 0:
+                # Detect the largest decrease
+                elbow_idx = np.argmin(gain_diffs)
+                best_k = ks[elbow_idx + 1]  # +1 because diff reduces array size by 1
+            else:
+                best_k = min(self.models_dict.keys())
+        else:
+            raise ValueError(f"Method '{method}' not applicable with current results")
+
+        return int(best_k)
+
+    def plot_interpretability_metrics(self):
+        """Plot interpretability metrics for different numbers of archetypes."""
+        if not self.results:
+            raise ValueError("Must run evaluate_all_models() first")
+
+        ks = sorted(self.results.keys())
+
+        # Prepare metrics for plotting
+        avg_distinctiveness = [self.results[k]["avg_distinctiveness"] for k in ks]
+        avg_sparsity = [self.results[k]["avg_sparsity"] for k in ks]
+        avg_purity = [self.results[k]["avg_purity"] for k in ks]
+        interpretability = [self.results[k]["interpretability_score"] for k in ks]
+
+        information_gain = []
+        for k in ks[1:]:  # Skip first k as it has no information gain
+            information_gain.append(self.results[k].get("information_gain", np.nan))
+
+        balance_scores = []
+        for k in ks[1:]:  # Skip first k
+            balance_scores.append(self.results[k].get("balance_score", np.nan))
+
+        # Create plots
+        fig, axes = plt.subplots(3, 1, figsize=(12, 15))
+
+        # Plot interpretability metrics
+        axes[0].plot(ks, avg_distinctiveness, "o-", label="Distinctiveness")
+        axes[0].plot(ks, avg_sparsity, "s-", label="Sparsity")
+        axes[0].plot(ks, avg_purity, "^-", label="Purity")
+        axes[0].plot(ks, interpretability, "D-", label="Overall Interpretability")
+        axes[0].set_xlabel("Number of Archetypes")
+        axes[0].set_ylabel("Score")
+        axes[0].set_title("Interpretability Metrics vs Number of Archetypes")
+        axes[0].legend()
+        axes[0].grid(True)
+
+        # Plot information gain
+        if len(information_gain) > 0 and not all(np.isnan(information_gain)):
+            axes[1].plot(ks[1:], information_gain, "o-")
+            axes[1].set_xlabel("Number of Archetypes")
+            axes[1].set_ylabel("Information Gain")
+            axes[1].set_title("Information Gain from Adding Archetypes")
+            axes[1].grid(True)
+        else:
+            axes[1].text(
+                0.5,
+                0.5,
+                "No information gain data available",
+                horizontalalignment="center",
+                verticalalignment="center",
+            )
+
+        # Plot balance score
+        if len(balance_scores) > 0 and not all(np.isnan(balance_scores)):
+            axes[2].plot(ks[1:], balance_scores, "o-")
+            axes[2].set_xlabel("Number of Archetypes")
+            axes[2].set_ylabel("Balance Score")
+            axes[2].set_title("Interpretability-Information Gain Balance")
+            axes[2].grid(True)
+
+            # Highlight best k according to balance score
+            if not all(np.isnan(balance_scores)):
+                best_idx = np.nanargmax(balance_scores)
+                best_k = ks[1:][best_idx]
+                axes[2].axvline(best_k, color="r", linestyle="--", label=f"Optimal k={best_k}")
+                axes[2].legend()
+        else:
+            axes[2].text(
+                0.5,
+                0.5,
+                "No balance score data available",
+                horizontalalignment="center",
+                verticalalignment="center",
+            )
+        plt.tight_layout()
+        plt.show()
 
 
 class BiarchetypalAnalysisInterpreter:
