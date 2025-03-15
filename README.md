@@ -27,7 +27,31 @@ AA finds interpretable extremal points that often correspond to meaningful proto
 ## Installation
 
 ```bash
+# Using pip
 pip install archetypax
+```
+
+or from GitHub:
+
+```bash
+pip install git+https://github.com/lv416e/archetypax.git
+```
+
+### Using uv
+
+```bash
+uv pip install archetypax
+# or from GitHub
+uv pip install git+https://github.com/lv416e/archetypax.git
+```
+
+### Using Poetry
+
+``` bash
+poetry add archetypax
+
+# or from GitHub
+poetry add git+https://github.com/lv416e/archetypax.git
 ```
 
 ### Requirements
