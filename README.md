@@ -124,7 +124,7 @@ from archetypax.tools import ArchetypalAnalysisVisualizer
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
-from archetypax import ArchetypalAnalysis
+from archetypax import ImprovedArchetypalAnalysis as ArchetypalAnalysis
 from archetypax.tools.visualization import ArchetypalAnalysisVisualizer
 
 # Generate some interesting 2D data (a triangle with points inside)
