@@ -38,13 +38,10 @@ To leverage GPU acceleration, ensure you have installed the appropriate JAX vers
 .. code-block:: bash
 
     # For CUDA-compatible NVIDIA GPUs
-    pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+    pip install --upgrade "jax[cuda12]"
 
     # For TPUs
-    pip install --upgrade "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-
-    # For Metal (Apple Silicon)
-    pip install --upgrade "jax[metal]"
+    pip install --upgrade "jax[tpu]"
 
 Verification
 -----------
