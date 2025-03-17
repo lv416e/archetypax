@@ -20,6 +20,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         tol: float = 1e-6,
         random_seed: int = 42,
         learning_rate: float = 0.001,
+        projection_method: str = "cbap",
+        projection_alpha: float = 0.2,
+        lambda_reg: float = 0.01,
     ):
         """Initialize the Improved Archetypal Analysis model.
 
@@ -29,12 +32,20 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             tol: Convergence tolerance
             random_seed: Random seed for initialization
             learning_rate: Learning rate for optimization
+            projection_method: Method for projecting archetypes
+            projection_alpha: Weight for extreme point
+            lambda_reg: Regularization parameter
         """
         self.n_archetypes = n_archetypes
         self.max_iter = max_iter
         self.tol = tol
         self.random_seed = random_seed
         self.learning_rate = learning_rate
+        self.projection_method = (
+            projection_method if projection_method != "cbap" or projection_method != "default" else "default"
+        )
+        self.projection_alpha = projection_alpha
+        self.lambda_reg = lambda_reg
         super().__init__(
             n_archetypes=n_archetypes,
             max_iter=max_iter,
@@ -165,6 +176,156 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         return np.array(weights_jax)
 
+    def directional_init(self, X_jax, n_samples, n_features):
+        """Generate directions using points that are evenly distributed on a sphere."""
+        centroid = jnp.mean(X_jax, axis=0)
+
+        # Special handling for low dimensions (2D and 3D)
+        if n_features == 2:  # In 2D, arrange points evenly on the circumference of a circle
+            angles = jnp.linspace(0, 2 * jnp.pi, self.n_archetypes, endpoint=False)
+            directions = jnp.column_stack([jnp.cos(angles), jnp.sin(angles)])
+        elif n_features == 3:  # In 3D, use the Fibonacci sphere lattice method
+            golden_ratio = (1 + 5**0.5) / 2
+            i = jnp.arange(self.n_archetypes)
+            theta = 2 * jnp.pi * i / golden_ratio
+            phi = jnp.arccos(1 - 2 * (i + 0.5) / self.n_archetypes)
+
+            x = jnp.sin(phi) * jnp.cos(theta)
+            y = jnp.sin(phi) * jnp.sin(theta)
+            z = jnp.cos(phi)
+            directions = jnp.column_stack([x, y, z])
+        else:  # For higher dimensions, employ a repulsion method
+            # Generate initial directions randomly
+            self.key, subkey = jax.random.split(self.key)
+            directions = jax.random.normal(subkey, (self.n_archetypes, n_features))
+
+            # Normalize the direction vectors
+            norms = jnp.linalg.norm(directions, axis=1, keepdims=True)
+            directions = directions / (norms + 1e-10)
+
+            # Execute the repulsion simulation
+            repulsion_strength = 0.1  # Strength of the repulsion force
+            n_iterations = 50  # Number of iterations for the repulsion simulation
+
+            def repulsion_step(directions, _):
+                # Calculate the dot product between all pairs of directions (a measure of similarity)
+                similarities = jnp.dot(directions, directions.T)
+
+                # Set the diagonal elements (self-similarity) to zero
+                similarities = similarities - jnp.eye(self.n_archetypes) * similarities
+
+                # Calculate repulsion forces for each direction
+                repulsion_forces = jnp.zeros_like(directions)
+
+                # Compute repulsion forces for each pair of directions
+                def compute_pair_repulsion(i, forces):
+                    # Repulsion from all directions towards the i-th direction
+                    repulsions = similarities[i, :, jnp.newaxis] * directions
+
+                    # Exclude repulsion from itself
+                    mask = jnp.ones(self.n_archetypes, dtype=bool)
+                    mask = mask.at[i].set(False)
+                    mask = mask[:, jnp.newaxis]
+
+                    # Calculate the total repulsion (stronger for higher similarity)
+                    total_repulsion = jnp.sum(repulsions * mask, axis=0)
+
+                    # Update the repulsion force for the i-th direction
+                    return forces.at[i].set(forces[i] - repulsion_strength * total_repulsion)
+
+                # Apply repulsion forces to all directions
+                forces = jax.lax.fori_loop(0, self.n_archetypes, compute_pair_repulsion, repulsion_forces)
+
+                # Update the direction vectors
+                new_directions = directions + forces
+
+                # Normalize the updated directions
+                norms = jnp.linalg.norm(new_directions, axis=1, keepdims=True)
+                new_directions = new_directions / (norms + 1e-10)
+
+                return new_directions, None
+
+            # Execute the repulsion simulation
+            directions, _ = jax.lax.scan(repulsion_step, directions, jnp.arange(n_iterations))
+
+        # Identify the most extreme points in each direction
+        archetypes = jnp.zeros((self.n_archetypes, n_features))
+
+        def find_extreme_point(i, archetypes):
+            # Project data points onto the direction
+            projections = jnp.dot(X_jax - centroid, directions[i])
+            # Find the farthest point
+            max_idx = jnp.argmax(projections)
+            return archetypes.at[i].set(X_jax[max_idx])
+
+        archetypes = jax.lax.fori_loop(0, self.n_archetypes, find_extreme_point, archetypes)
+
+        return archetypes, jnp.zeros(self.n_archetypes, dtype=jnp.int32)
+
+    def qhull_init(self, X_jax, n_samples, n_features):
+        """Initialize archetypes using convex hull vertices via QHull algorithm."""
+        # Convert to numpy for scipy compatibility
+        X_np = np.array(X_jax)
+
+        try:
+            # Compute the convex hull using scipy's implementation of QHull
+            from scipy.spatial import ConvexHull
+
+            print("Computing convex hull...")
+            hull = ConvexHull(X_np)
+        except Exception as e:
+            print(f"QHull initialization failed: {e}. Falling back to k-means++ initialization.")
+            return self.kmeans_pp_init(X_jax, n_samples, n_features)
+
+        # Get the vertices of the convex hull
+        vertices = hull.vertices
+        vertex_points = X_np[vertices]
+
+        # If we have more vertices than required archetypes, select a subset
+        if len(vertices) > self.n_archetypes:
+            # Strategy 1: Farthest point sampling
+            selected_indices = [0]  # Start with the first vertex
+
+            for _ in range(self.n_archetypes - 1):
+                # Compute distances to already selected points
+                distances = []
+                for i in range(len(vertex_points)):
+                    if i not in selected_indices:
+                        min_dist = float("inf")
+                        for j in selected_indices:
+                            dist = np.sum((vertex_points[i] - vertex_points[j]) ** 2)
+                            min_dist = min(min_dist, dist)
+                        distances.append((i, min_dist))
+
+                # Select the farthest point
+                if distances:
+                    next_idx = max(distances, key=lambda x: x[1])[0]
+                    selected_indices.append(next_idx)
+
+            # Get the final selected vertices
+            selected_vertices = [vertices[i] for i in selected_indices]
+
+        # If we have fewer vertices than required archetypes, add some random points
+        elif len(vertices) < self.n_archetypes:
+            # Strategy: Use all vertices and add random points from the data
+            selected_vertices = list(vertices)
+
+            # How many more archetypes do we need?
+            remaining = self.n_archetypes - len(vertices)
+
+            # Sample additional points randomly
+            self.key, subkey = jax.random.split(self.key)
+            additional_indices = jax.random.choice(subkey, n_samples, shape=(remaining,), replace=False, p=None)
+            selected_vertices.extend(additional_indices)
+        else:
+            # Perfect! We have exactly the right number of vertices
+            selected_vertices = vertices
+
+        # Use the selected vertices as initial archetypes
+        archetypes = jnp.array(X_np[selected_vertices])
+
+        return archetypes, jnp.array(selected_vertices)
+
     def kmeans_pp_init(self, X_jax, n_samples, n_features):
         """More efficient k-means++ style initialization using JAX."""
         # Randomly select the first center
@@ -224,7 +385,15 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             new_params = optax.apply_updates(params_f32, updates)
 
             new_params["weights"] = self.project_weights(new_params["weights"])
-            new_params["archetypes"] = self.project_archetypes(new_params["archetypes"], X_f32)
+            new_params["archetypes"] = jax.lax.cond(
+                self.projection_method == "cbap" or self.projection_method == "default",
+                lambda: self.project_archetypes(new_params["archetypes"], X_f32),
+                lambda: jax.lax.cond(
+                    self.projection_method == "convex_hull",
+                    lambda: self.project_archetypes_convex_hull(new_params["archetypes"], X_f32),
+                    lambda: self.project_archetypes_knn(new_params["archetypes"], X_f32),
+                ),
+            )
             # new_params["archetypes"] = self.project_archetypes_convex_hull(new_params["archetypes"], X_f32)
             # new_params["archetypes"] = self.project_archetypes_knn(new_params["archetypes"], X_f32)
             # new_params["archetypes"] = self.update_archetypes(new_params["archetypes"], new_params["weights"], X)
@@ -268,8 +437,10 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         )
         weights_init = self.project_weights(weights_init)
 
-        # Use improved k-means++ initialization
-        archetypes_init, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
+        # archetype initialization
+        # archetypes_init, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
+        # archetypes_init, _ = self.qhull_init(X_jax, n_samples, n_features)
+        archetypes_init, _ = self.directional_init(X_jax, n_samples, n_features)
         archetypes_init = archetypes_init.astype(jnp.float32)
         # archetypes_init = archetypes_init.astype(jnp.float16)
 
@@ -390,8 +561,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             # Mix the extreme point with the original archetype to ensure stability
             # Use a higher weight for the extreme point to push towards the boundary
-            alpha = 0.8  # Weight for extreme point
-            projected = alpha * X[max_idx] + (1 - alpha) * archetype
+            projected = self.projection_alpha * X[max_idx] + (1 - self.projection_alpha) * archetype
 
             return projected
 
@@ -537,9 +707,8 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         entropy = -jnp.sum(weights_f32 * jnp.log(weights_f32 + 1e-10), axis=1)
         entropy_reg = -jnp.mean(entropy)
-        lambda_reg = 0.01
 
-        return (reconstruction_loss + lambda_reg * entropy_reg).astype(jnp.float32)
+        return (reconstruction_loss + self.lambda_reg * entropy_reg).astype(jnp.float32)
         # return (reconstruction_loss + lambda_reg * entropy_reg).astype(jnp.float16)
 
     @partial(jax.jit, static_argnums=(0,))
@@ -556,3 +725,341 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         """Alternative archetype update strategy based on weighted reconstruction."""
         W_pinv = jnp.linalg.pinv(weights)
         return jnp.array(jnp.matmul(W_pinv, X))
+
+
+class ArchetypeTracker(ImprovedArchetypalAnalysis):
+    """A specialized subclass designed to monitor the movement of archetypes."""
+
+    def __init__(self, *args, **kwargs):
+        """Initialize the ArchetypeTracker with parameters identical to those of ImprovedArchetypalAnalysis."""
+        super().__init__(*args, **kwargs)
+        self.archetype_history = []
+        self.optimizer: optax.GradientTransformation = optax.adam(learning_rate=self.learning_rate)
+        # Specific settings for archetype updates
+        self.archetype_grad_scale = (
+            2.0  # Gradient scale for archetypes (values greater than 1.0 enhance archetype updates)
+        )
+        self.noise_scale = 0.05  # Magnitude of initial noise
+        self.exploration_noise_scale = 0.1  # Magnitude of exploration noise
+
+    def fit(self, X: np.ndarray, normalize: bool = False) -> "ArchetypeTracker":
+        """Train the model while documenting the positions of archetypes at each iteration."""
+        # Data preprocessing
+        if normalize:
+            self.X_mean = X.mean(axis=0)
+            self.X_std = X.std(axis=0)
+            X = (X - self.X_mean) / self.X_std
+
+        # Convert to JAX array
+        X_jax = jnp.array(X)
+        n_samples, n_features = X_jax.shape
+
+        # JIT-compiled weight calculation function
+        @jax.jit
+        def calculate_single_weight(x_sample, archetypes):
+            """Compute the weight for a single sample (JIT optimized)."""
+            # Initial weights
+            w = jnp.ones(self.n_archetypes) / self.n_archetypes
+
+            # Define the internal loop state
+            def weight_update_step(w, _):
+                # Calculate prediction and error
+                pred = jnp.dot(w, archetypes)
+                error = x_sample - pred
+                grad = -2.0 * jnp.dot(error, archetypes.T)
+
+                # Apply gradient descent and constraints
+                w_new = w - 0.01 * grad
+                w_new = jnp.maximum(1e-10, w_new)
+                sum_w = jnp.sum(w_new)
+                w_new = jnp.where(sum_w > 1e-10, w_new / sum_w, jnp.ones_like(w_new) / self.n_archetypes)
+                return w_new, None
+
+            # Use lax.scan to optimize iterative calculations (instead of a for loop)
+            final_w, _ = jax.lax.scan(weight_update_step, w, None, length=100)
+            return final_w
+
+        # Use vmap to parallelize weight calculations for all samples
+        calculate_all_weights = jax.vmap(calculate_single_weight, in_axes=(0, None))
+
+        # Initialize archetypes and weights
+        _, subkey = jax.random.split(jax.random.key(self.random_seed))
+        archetypes, _ = self.directional_init(X_jax, n_samples, n_features)
+
+        # Introduce a small noise after archetype initialization to encourage exploration
+        self.key, subkey = jax.random.split(self.key)
+        noise = jax.random.normal(subkey, archetypes.shape) * self.noise_scale
+        archetypes = archetypes + noise
+
+        # Project again after adding noise to return to the convex hull boundary
+        archetypes = self.project_archetypes(archetypes, X_jax)
+
+        # Store initial archetypes
+        self.archetype_history = [np.array(archetypes)]
+
+        # Set up optimization
+        self.optimizer = optax.adam(learning_rate=self.learning_rate)
+        opt_state = self.optimizer.init(archetypes)
+
+        # Optimization loop
+        prev_loss = float("inf")
+        self.loss_history = []
+        prev_archetypes = archetypes.copy()  # Store previous archetypes for monitoring changes
+
+        # Variables to store the best parameters throughout optimization
+        best_archetypes = archetypes.copy()
+        best_loss = float("inf")
+        no_improvement_count = 0
+
+        # Calculate initial loss for debugging
+        initial_loss = float(self.loss_function(archetypes, None, X_jax))
+        print(f"Initial loss: {initial_loss:.6f}")
+
+        for i in range(self.max_iter):
+            # Execute update step
+            try:
+                archetypes, opt_state, loss_value = self._update_step(archetypes, opt_state, X_jax, i)
+
+                # Store current archetypes
+                self.archetype_history.append(np.array(archetypes))
+
+                # Check for NaN
+                if jnp.isnan(loss_value):
+                    print(f"Warning: NaN detected at iteration {i}. Stopping early.")
+                    break
+
+                # Record loss
+                self.loss_history.append(loss_value)
+
+                # Update best parameters if the current loss is lower
+                if loss_value < best_loss:
+                    best_loss = loss_value
+                    best_archetypes = archetypes.copy()
+                    no_improvement_count = 0
+                else:
+                    no_improvement_count += 1
+
+                # Revert to best parameters if loss increases significantly
+                # Use JAX-style functional approach for parameter restoration
+                def make_restore_best_params(iteration, best_archetypes_val, best_loss_val):
+                    def restore_best_params(_):
+                        print(
+                            f"Warning: Loss increased significantly at iteration {iteration}. Reverting to best parameters."
+                        )
+                        restored_params = {
+                            "archetypes": best_archetypes_val.copy(),
+                            "weights": None,  # Assuming weights are not updated in this method
+                        }
+                        return restored_params, best_loss_val
+
+                    return restore_best_params
+
+                def make_keep_current_params(archetypes_val, loss_val):
+                    def keep_current_params(_):
+                        return archetypes_val, loss_val
+
+                    return keep_current_params
+
+                # Only revert if loss increased significantly and not in early stages
+                should_revert = (loss_value > prev_loss * 1.05) & (i > 50)
+                restore_fn = make_restore_best_params(i, best_archetypes, best_loss)
+                keep_fn = make_keep_current_params(archetypes, loss_value)
+                archetypes, loss_value = jax.lax.cond(should_revert, restore_fn, keep_fn, operand=None)
+
+                # Reduce learning rate after extended periods without improvement
+                if no_improvement_count >= 100 and no_improvement_count % 100 == 0:
+                    print(f"No improvement for {no_improvement_count} iterations. Reducing learning rate.")
+                    # Create new optimizer with reduced learning rate
+                    reduced_lr = self.learning_rate * 0.5
+                    self.optimizer = optax.adam(learning_rate=reduced_lr)
+                    opt_state = self.optimizer.init(archetypes)
+
+                # Check for convergence
+                if i > 0 and abs(prev_loss - loss_value) < self.tol:
+                    print(f"Converged at iteration {i}")
+                    break
+
+                prev_loss = loss_value
+
+                # Show progress and monitor archetype changes
+                if i % 50 == 0:
+                    archetype_change = jnp.mean(jnp.sum((archetypes - prev_archetypes) ** 2, axis=1))
+                    print(f"Iteration {i}, Loss: {loss_value:.6f}, Avg archetype change: {float(archetype_change):.6f}")
+                    prev_archetypes = archetypes.copy()
+
+                    # Exploratory movement: occasionally perturb the archetypes randomly
+                    if i > 0 and i % 200 == 0 and archetype_change < 0.001:
+                        print("Introducing exploration noise to the archetypes...")
+
+                        # Store loss and parameters before adding noise
+                        pre_noise_loss = loss_value
+                        pre_noise_archetypes = archetypes.copy()
+
+                        # Add exploration noise
+                        self.key, subkey = jax.random.split(self.key)
+                        exploration_noise = jax.random.normal(subkey, archetypes.shape) * self.exploration_noise_scale
+                        archetypes = archetypes + exploration_noise
+                        archetypes = self.project_archetypes(archetypes, X_jax)
+
+                        # Calculate loss after adding noise
+                        post_noise_loss = float(self.loss_function(archetypes, None, X_jax))
+
+                        # Revert noise if loss increases significantly using JAX-style conditionals
+                        def make_revert_noise(pre_loss, post_loss, pre_archetypes):
+                            def revert_noise(_):
+                                print(
+                                    f"Noise increased loss significantly ({pre_loss:.6f} -> {post_loss:.6f}). Reverting."
+                                )
+                                return pre_archetypes
+
+                            return revert_noise
+
+                        def make_keep_noise(current_archetypes):
+                            def keep_noise(_):
+                                return current_archetypes
+
+                            return keep_noise
+
+                        # Check if noise should be reverted (loss increased by more than 10%)
+                        should_revert_noise = post_noise_loss > pre_noise_loss * 1.1
+                        revert_fn = make_revert_noise(pre_noise_loss, post_noise_loss, pre_noise_archetypes)
+                        keep_fn = make_keep_noise(archetypes)
+                        archetypes = jax.lax.cond(should_revert_noise, revert_fn, keep_fn, operand=None)
+
+            except Exception as e:
+                print(f"Error at iteration {i}: {e!s}")
+                break
+
+        # Use the best parameters for the final model if they outperform the current ones
+        # JAX-style conditional for final parameter selection
+        def make_use_best_params(best_archetypes_val, best_loss_val):
+            def use_best_params(_):
+                print(f"Utilizing best parameters with loss: {best_loss_val:.6f}")
+                return best_archetypes_val
+
+            return use_best_params
+
+        def make_use_current_params(current_archetypes):
+            def use_current_params(_):
+                return current_archetypes
+
+            return use_current_params
+
+        # Check if the best parameters yield a lower loss
+        current_final_loss = float(self.loss_function(archetypes, None, X_jax))
+        use_best = best_loss < current_final_loss
+        use_best_fn = make_use_best_params(best_archetypes, best_loss)
+        use_current_fn = make_use_current_params(archetypes)
+        archetypes = jax.lax.cond(use_best, use_best_fn, use_current_fn, operand=None)
+
+        # Calculate the final weights
+        weights = calculate_all_weights(X_jax, archetypes)
+
+        # Inverse scale transformation
+        archetypes_scaled = np.array(archetypes)
+        self.archetypes = archetypes_scaled * self.X_std + self.X_mean if normalize else archetypes_scaled
+        self.weights = np.array(weights)  # Store weights
+        self.archetype_history = [
+            arch * self.X_std + self.X_mean if normalize else arch for arch in self.archetype_history
+        ]
+
+        return self
+
+    def _update_step(self, archetypes, opt_state, X, iteration):
+        """Execute one iteration of the update step with JAX acceleration."""
+
+        # JIT-compiled weight calculation function
+        @jax.jit
+        def calculate_single_weight(x_sample, archetypes):
+            """Compute the weight for a single sample (JIT optimized)."""
+            # Initial weights
+            w = jnp.ones(self.n_archetypes) / self.n_archetypes
+
+            # Define the internal loop state
+            def weight_update_step(w, _):
+                # Calculate prediction and error
+                pred = jnp.dot(w, archetypes)
+                error = x_sample - pred
+                grad = -2.0 * jnp.dot(error, archetypes.T)
+
+                # Apply gradient descent and constraints
+                w_new = w - 0.01 * grad
+                w_new = jnp.maximum(1e-10, w_new)
+                sum_w = jnp.sum(w_new)
+                w_new = jnp.where(sum_w > 1e-10, w_new / sum_w, jnp.ones_like(w_new) / self.n_archetypes)
+                return w_new, None
+
+            # Use lax.scan to optimize iterative calculations (instead of a for loop)
+            final_w, _ = jax.lax.scan(weight_update_step, w, None, length=100)
+            return final_w
+
+        # Use vmap to parallelize weight calculations for all samples
+        calculate_all_weights = jax.vmap(calculate_single_weight, in_axes=(0, None))
+        weights = calculate_all_weights(X, archetypes)  # Store the results of weight calculations
+
+        # Define the loss function (with archetypes as the only variable)
+        def loss_fn(arch):
+            return self.loss_function(arch, weights, X)
+
+        # Calculate loss and gradients
+        loss_value, grads = jax.value_and_grad(loss_fn)(archetypes)
+
+        # Adjust and clip the gradient scale
+        grads = grads * self.archetype_grad_scale
+        grads = jnp.clip(grads, -1.0, 1.0)
+
+        # Execute the optimization step
+        if self.optimizer is None:
+            raise ValueError("Optimizer is not initialized")
+
+        updates, opt_state = self.optimizer.update(grads, opt_state)
+        archetypes = optax.apply_updates(archetypes, updates)
+
+        # Store the current loss
+        current_loss = loss_value
+
+        # Alternating optimization: strongly update archetypes in specific iterations
+        do_enhanced_update = jnp.mod(iteration, 3) == 0
+
+        # Preserve archetypes before projection
+        pre_projection_archetypes = archetypes.copy()
+
+        # Define projection functions for JAX conditionals
+        def apply_enhanced_update():
+            return self._enhanced_archetype_update(archetypes, X, iteration)
+
+        def apply_standard_projection():
+            # Nested conditional for standard projection methods
+            def project_default():
+                return self.project_archetypes(archetypes, X)
+
+            def project_random():
+                return self.project_archetypes_random(archetypes, X)
+
+            def project_knn():
+                return self.project_archetypes_knn(archetypes, X)
+
+            # Select projection method using JAX conditionals
+            return jax.lax.cond(
+                self.projection_method == "random",
+                project_random,
+                lambda: jax.lax.cond(self.projection_method == "knn", project_knn, project_default),
+            )
+
+        # Apply projection with JAX conditional
+        projected_archetypes = jax.lax.cond(do_enhanced_update, apply_enhanced_update, apply_standard_projection)
+
+        # Calculate loss after projection
+        post_projection_loss = float(self.loss_function(projected_archetypes, weights, X))
+
+        # If loss increases, reduce the projection intensity
+        if post_projection_loss > current_loss * 1.05:  # Allow for an increase of more than 5%
+            # Blend to reduce projection intensity
+            blend_factor = 0.3  # Adjust projection intensity
+            archetypes = (1 - blend_factor) * pre_projection_archetypes + blend_factor * projected_archetypes
+            loss_value = float(self.loss_function(archetypes, weights, X))
+        else:
+            archetypes = projected_archetypes
+            loss_value = post_projection_loss
+
+        return archetypes, opt_state, loss_value

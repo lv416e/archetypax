@@ -38,6 +38,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         tol: float = 1e-6,
         random_seed: int = 42,
         learning_rate: float = 0.001,
+        projection_method: str = "default",
         lambda_reg: float = 0.01,
     ):
         """
@@ -50,7 +51,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             tol: Convergence tolerance
             random_seed: Random seed for initialization
             learning_rate: Learning rate for optimizer
-            lambda_reg: Regularization parameter for entropy
+            projection_method: Method for projecting archetypes
+            alpha: Weight for extreme point
+            lambda_reg: Regularization parameter
         """
         # Initialize using parent class with the row archetypes
         # (we'll handle column archetypes separately)

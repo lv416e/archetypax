@@ -6,7 +6,7 @@ import types
 from typing import Any
 
 from . import archetypes, base, biarchetypes
-from .archetypes import ImprovedArchetypalAnalysis
+from .archetypes import ArchetypeTracker, ImprovedArchetypalAnalysis
 
 # Expose key classes at the models level
 from .base import ArchetypalAnalysis
