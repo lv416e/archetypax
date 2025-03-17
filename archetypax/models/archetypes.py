@@ -20,9 +20,10 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         tol: float = 1e-6,
         random_seed: int = 42,
         learning_rate: float = 0.001,
+        lambda_reg: float = 0.01,
+        normalize: bool = False,
         projection_method: str = "cbap",
         projection_alpha: float = 0.2,
-        lambda_reg: float = 0.01,
     ):
         """Initialize the Improved Archetypal Analysis model.
 
@@ -32,20 +33,22 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             tol: Convergence tolerance
             random_seed: Random seed for initialization
             learning_rate: Learning rate for optimization
+            lambda_reg: Regularization parameter
+            normalize: Whether to normalize the data
             projection_method: Method for projecting archetypes
             projection_alpha: Weight for extreme point
-            lambda_reg: Regularization parameter
         """
         self.n_archetypes = n_archetypes
         self.max_iter = max_iter
         self.tol = tol
         self.random_seed = random_seed
         self.learning_rate = learning_rate
+        self.lambda_reg = lambda_reg
+        self.normalize = normalize
         self.projection_method = (
             projection_method if projection_method != "cbap" or projection_method != "default" else "default"
         )
         self.projection_alpha = projection_alpha
-        self.lambda_reg = lambda_reg
         super().__init__(
             n_archetypes=n_archetypes,
             max_iter=max_iter,
