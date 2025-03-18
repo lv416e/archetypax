@@ -301,7 +301,9 @@ class TestImprovedArchetypalAnalysis:
         model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=10)
 
         # Test fit_transform with kwargs
-        weights = model.fit_transform(small_sample_data, normalize=True, method="adam", max_iter=15, tol=1e-4)
+        weights = model.fit_transform(
+            small_sample_data, normalize=True, method="adam", max_iter=15, tol=1e-4
+        )
 
         assert weights.shape == (20, 2)
         assert np.allclose(np.sum(weights, axis=1), 1.0)
@@ -507,7 +509,9 @@ class TestBiarchetypalAnalysis:
         with pytest.raises(ValueError, match="Model must be fitted before getting row archetypes"):
             model.get_row_archetypes()
 
-        with pytest.raises(ValueError, match="Model must be fitted before getting column archetypes"):
+        with pytest.raises(
+            ValueError, match="Model must be fitted before getting column archetypes"
+        ):
             model.get_col_archetypes()
 
         with pytest.raises(ValueError, match="Model must be fitted before getting row weights"):

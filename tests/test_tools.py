@@ -568,10 +568,14 @@ class TestBiarchetypalAnalysisVisualizer:
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
         BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(fitted_biarchetypal_model)
-        BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(fitted_biarchetypal_model, n_samples=20)
+        BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(
+            fitted_biarchetypal_model, n_samples=20
+        )
 
     @pytest.mark.slow
-    def test_plot_dual_archetypes_2d_with_2d_data(self, biarchetypal_sample_data_2d, fitted_biarchetypal_model_2d):
+    def test_plot_dual_archetypes_2d_with_2d_data(
+        self, biarchetypal_sample_data_2d, fitted_biarchetypal_model_2d
+    ):
         """Verify 2D dual archetype visualization."""
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
@@ -602,14 +606,20 @@ class TestBiarchetypalAnalysisVisualizer:
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
         BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(fitted_biarchetypal_model_2d)
-        BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(fitted_biarchetypal_model_2d, n_samples=20)
+        BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(
+            fitted_biarchetypal_model_2d, n_samples=20
+        )
 
     @pytest.mark.slow
-    def test_plot_mixture_effect_with_2d_data(self, biarchetypal_sample_data_2d, fitted_biarchetypal_model_2d):
+    def test_plot_mixture_effect_with_2d_data(
+        self, biarchetypal_sample_data_2d, fitted_biarchetypal_model_2d
+    ):
         """Verify mixture effect visualization."""
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
-        BiarchetypalAnalysisVisualizer.plot_mixture_effect(fitted_biarchetypal_model_2d, biarchetypal_sample_data_2d)
+        BiarchetypalAnalysisVisualizer.plot_mixture_effect(
+            fitted_biarchetypal_model_2d, biarchetypal_sample_data_2d
+        )
         BiarchetypalAnalysisVisualizer.plot_mixture_effect(
             fitted_biarchetypal_model_2d, biarchetypal_sample_data_2d, mixture_steps=3
         )
@@ -620,7 +630,9 @@ class TestBiarchetypalAnalysisVisualizer:
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
         BiarchetypalAnalysisVisualizer.plot_dual_simplex_2d(fitted_biarchetypal_model_2d_3arch)
-        BiarchetypalAnalysisVisualizer.plot_dual_simplex_2d(fitted_biarchetypal_model_2d_3arch, n_samples=100)
+        BiarchetypalAnalysisVisualizer.plot_dual_simplex_2d(
+            fitted_biarchetypal_model_2d_3arch, n_samples=100
+        )
 
 
 @pytest.fixture
@@ -661,7 +673,9 @@ class TestArchetypalAnalysisVisualizer:
         """Verify 2D archetype visualization."""
         feature_names = [f"Feature {i}" for i in range(sample_data_2d.shape[1])]
 
-        ArchetypalAnalysisVisualizer.plot_archetypes_2d(fitted_model_2d, sample_data_2d, feature_names)
+        ArchetypalAnalysisVisualizer.plot_archetypes_2d(
+            fitted_model_2d, sample_data_2d, feature_names
+        )
         ArchetypalAnalysisVisualizer.plot_archetypes_2d(fitted_model_2d, sample_data_2d)
 
     @pytest.mark.slow
@@ -800,7 +814,9 @@ class TestBiarchetypalAnalysisInterpreter:
         interpreter.evaluate_all_models(biarchetypal_sample_data)
 
         # Test different methods for suggesting optimal biarchetypes
-        optimal_interpretability = interpreter.suggest_optimal_biarchetypes(method="interpretability")
+        optimal_interpretability = interpreter.suggest_optimal_biarchetypes(
+            method="interpretability"
+        )
         assert isinstance(optimal_interpretability, tuple)
         assert len(optimal_interpretability) == 2
 
