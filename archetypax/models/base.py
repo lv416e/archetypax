@@ -97,13 +97,14 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         projected_archetypes = jnp.stack([_process_archetype(i) for i in range(archetypes.shape[0])])
         return projected_archetypes
 
-    def fit(self, X: np.ndarray, normalize: bool = False) -> "ArchetypalAnalysis":
+    def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "ArchetypalAnalysis":
         """
         Fit the model to the data.
 
         Args:
             X: Data matrix of shape (n_samples, n_features)
             normalize: Whether to normalize the data before fitting.
+            **kwargs: Additional keyword arguments for the fit method.
 
         Returns:
             Self
@@ -243,12 +244,14 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
         return self
 
-    def transform(self, X: np.ndarray) -> np.ndarray:
+    def transform(self, X: np.ndarray, y: np.ndarray | None = None, **kwargs) -> np.ndarray:
         """
         Transform new data to archetype weights.
 
         Args:
             X: New data matrix of shape (n_samples, n_features)
+            y: Ignored. Present for API consistency by convention.
+            **kwargs: Additional keyword arguments for the transform method.
 
         Returns:
             Weight matrix representing each sample as a combination of archetypes

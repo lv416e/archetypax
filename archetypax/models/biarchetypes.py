@@ -318,13 +318,14 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Transpose the result back to original shape
         return jnp.asarray(projected_archetypes.T)
 
-    def fit(self, X: np.ndarray, normalize: bool = False) -> "BiarchetypalAnalysis":
+    def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "BiarchetypalAnalysis":
         """
         Fit the Biarchetypal Analysis model to the data.
 
         Args:
             X: Data matrix of shape (n_samples, n_features)
             normalize: Whether to normalize the data before fitting
+            **kwargs: Additional keyword arguments for the fit method.
 
         Returns:
             Self
@@ -657,12 +658,14 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         return self
 
-    def transform(self, X: np.ndarray) -> Any:
+    def transform(self, X: np.ndarray, y: np.ndarray | None = None, **kwargs) -> Any:
         """
         Transform new data to row and column archetype weights.
 
         Args:
             X: New data matrix of shape (n_samples, n_features)
+            y: Ignored. Present for API consistency by convention.
+            **kwargs: Additional keyword arguments for the transform method.
 
         Returns:
             Tuple of (row_weights, col_weights) representing the data in terms of archetypes
@@ -708,7 +711,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         result = (np.asarray(alpha_new), np.asarray(gamma_new))
         return result
 
-    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False) -> Any:
+    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False, **kwargs) -> Any:
         """
         Fit the model and transform the data.
 
@@ -716,6 +719,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             X: Data matrix
             y: Target values (ignored)
             normalize: Whether to normalize the data
+            **kwargs: Additional keyword arguments for the fit_transform method.
 
         Returns:
             Tuple of (row_weights, col_weights)

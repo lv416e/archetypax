@@ -66,15 +66,74 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             learning_rate=learning_rate,
         )
 
-    def transform(self, X: np.ndarray) -> np.ndarray:
-        """Transform new data to archetype weights using JAX."""
+    def transform(
+        self,
+        X: np.ndarray,
+        y: np.ndarray | None = None,
+        **kwargs,
+    ) -> np.ndarray:
+        """Transform new data to archetype weights using optimized methods.
+
+        Args:
+            X: Data matrix of shape (n_samples, n_features)
+            y: Ignored. Present for API consistency by convention.
+            **kwargs: Additional keyword arguments for the transform method.
+
+        Returns:
+            Weight matrix representing each sample as a combination of archetypes
+        """
+        if self.archetypes is None:
+            raise ValueError("Model must be fitted before transform")
+
+        method = kwargs.get("method", "adam")
+        max_iter = kwargs.get("max_iter", self.max_iter)
+        tol = kwargs.get("tol", self.tol)
+
+        # Scale input data
+        if self.normalize:
+            X_scaled = (
+                (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X.copy()
+            )
+        else:
+            X_scaled = X.copy()
+
+        # Adaptive method selection based on dataset size
+        if method == "adaptive":
+            n_samples = X.shape[0]
+            if n_samples > 10000:
+                method = "sgd"  # For large datasets
+            elif n_samples > 1000:
+                method = "adam"  # For medium-sized datasets
+            else:
+                method = "lbfgs"  # For small datasets
+
+        # Method selection
+        print(f"Transforming data with {method} method")
+        if method == "lbfgs":
+            return self.transform_with_lbfgs(X_scaled, max_iter=max_iter, tol=tol)
+        elif method == "sgd":
+            return self._transform_with_improved_sgd(X_scaled, max_iter=max_iter, tol=tol)
+        elif method == "adam":
+            return self._transform_with_adam(X_scaled, max_iter=max_iter, tol=tol)
+        else:
+            return self._transform_with_adam(X_scaled, max_iter=max_iter, tol=tol)
+
+    def transform_with_lbfgs(self, X: np.ndarray, max_iter: int = 50, tol: float = 1e-5) -> np.ndarray:
+        """Transform new data using improved L-BFGS optimization.
+
+        Args:
+            X: Data matrix
+            max_iter: Maximum number of iterations
+            tol: Convergence tolerance
+
+        Returns:
+            Weight matrix
+        """
         if self.archetypes is None:
             raise ValueError("Model must be fitted before transform")
 
         # Scale input data
         X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
-
-        # Convert to JAX array
         X_jax = jnp.array(X_scaled)
 
         # Scale archetypes
@@ -85,50 +144,64 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         )
         archetypes_jax = jnp.array(archetypes_scaled)
 
-        # Define per-sample optimization in JAX
         @jax.jit
-        def optimize_weights(x_sample):
-            # Initialize weights uniformly
-            w = jnp.ones(self.n_archetypes) / self.n_archetypes
+        def objective(w, x):
+            pred = jnp.dot(w, archetypes_jax)
+            return jnp.sum((x - pred) ** 2)
 
-            # Define a single gradient step
-            def step(w, _):
-                pred = jnp.dot(w, archetypes_jax)
-                error = x_sample - pred
-                grad = -2 * jnp.dot(error, archetypes_jax.T)
+        @jax.jit
+        def project_to_simplex(w):
+            w = jnp.maximum(1e-10, w)
+            sum_w = jnp.sum(w)
+            return jnp.where(sum_w > 1e-10, w / sum_w, jnp.ones_like(w) / self.n_archetypes)
 
-                # Update with gradient
-                w_new = w - 0.01 * grad
+        @jax.jit
+        def optimize_single_sample(x):
+            w_init = jnp.ones(self.n_archetypes) / self.n_archetypes
+            optimizer = optax.adam(learning_rate=0.05)
+            opt_state = optimizer.init(w_init)
 
-                # Project to constraints
-                w_new = jnp.maximum(1e-10, w_new)  # Non-negativity with small epsilon
-                sum_w = jnp.sum(w_new)
-                # Avoid division by zero
-                w_new = jnp.where(
-                    sum_w > 1e-10,
-                    w_new / sum_w,
-                    jnp.ones_like(w_new) / self.n_archetypes,
-                )
+            def cond_fun(state):
+                _, _, _, i, converged = state
+                return jnp.logical_and(jnp.logical_not(converged), i < max_iter)
 
-                return w_new, None
+            def body_fun(state):
+                w, opt_state, prev_loss, i, _ = state
 
-            # Run 100 steps
-            final_w, _ = jax.lax.scan(step, w, jnp.arange(100))
-            return final_w
+                loss_val, grad = jax.value_and_grad(lambda w: objective(w, x))(w)
+                grad = jnp.clip(grad, -1.0, 1.0)
+                updates, new_opt_state = optimizer.update(grad, opt_state)
+                new_w = optax.apply_updates(w, updates)
+                new_w = project_to_simplex(new_w)
 
-        # Vectorize the optimization across all samples
-        batch_optimize = jax.vmap(optimize_weights)
-        weights_jax = batch_optimize(X_jax)
+                # Check convergence
+                converged = jnp.abs(prev_loss - loss_val) < tol
 
-        return np.array(weights_jax)
+                return (new_w, new_opt_state, loss_val, i + 1, converged)
 
-    def transform_with_lbfgs(self, X: np.ndarray) -> np.ndarray:
-        """Transform new data using improved optimization for better convergence."""
-        if self.archetypes is None:
-            raise ValueError("Model must be fitted before transform")
+            # Run optimization with early stopping
+            init_state = (w_init, opt_state, jnp.inf, 0, False)
+            final_state = jax.lax.while_loop(cond_fun, body_fun, init_state)
 
+            return final_state[0]  # Return optimized weights
+
+        # Efficient batch processing
+        batch_size = min(2000, X_jax.shape[0])
+        n_samples = X_jax.shape[0]
+        weights = []
+
+        for i in range(0, n_samples, batch_size):
+            end = min(i + batch_size, n_samples)
+            X_batch = X_jax[i:end]
+            batch_weights = jax.vmap(optimize_single_sample)(X_batch)
+            weights.append(np.array(batch_weights))
+
+        weights_array = np.vstack(weights) if len(weights) > 1 else weights[0]
+        return weights_array
+
+    def _transform_with_adam(self, X: np.ndarray, max_iter: int = 50, tol: float = 1e-5) -> np.ndarray:
+        """Transform using Adam optimizer with early stopping."""
         X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
-
         X_jax = jnp.array(X_scaled)
 
         archetypes_scaled = (
@@ -144,49 +217,123 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             return jnp.sum((x - pred) ** 2)
 
         @jax.jit
-        def grad_fn(w, x):
-            return jax.grad(lambda w: objective(w, x))(w)
-
-        @jax.jit
         def project_to_simplex(w):
             w = jnp.maximum(1e-10, w)
             sum_w = jnp.sum(w)
-            # Avoid division by zero
             return jnp.where(sum_w > 1e-10, w / sum_w, jnp.ones_like(w) / self.n_archetypes)
 
         @jax.jit
         def optimize_single_sample(x):
             w_init = jnp.ones(self.n_archetypes) / self.n_archetypes
-
-            optimizer = optax.adam(learning_rate=0.05)
+            optimizer = optax.adam(learning_rate=0.03)
             opt_state = optimizer.init(w_init)
 
-            def step(state, _):
-                w, opt_state = state
+            def cond_fun(state):
+                _, _, _, i, converged = state
+                return jnp.logical_and(jnp.logical_not(converged), i < max_iter)
+
+            def body_fun(state):
+                w, opt_state, prev_loss, i, _ = state
+
                 loss_val, grad = jax.value_and_grad(lambda w: objective(w, x))(w)
                 grad = jnp.clip(grad, -1.0, 1.0)
-                updates, opt_state = optimizer.update(grad, opt_state)
-                w = optax.apply_updates(w, updates)
-                w = project_to_simplex(w)
-                return (w, opt_state), loss_val
+                updates, new_opt_state = optimizer.update(grad, opt_state)
+                new_w = optax.apply_updates(w, updates)
+                new_w = project_to_simplex(new_w)
 
-            (final_w, _), _ = jax.lax.scan(step, (w_init, opt_state), jnp.arange(50))
+                # Check convergence
+                converged = jnp.abs(prev_loss - loss_val) < tol
 
-            return final_w
+                return (new_w, new_opt_state, loss_val, i + 1, converged)
 
-        batch_size = 1000
+            # Initialize state with iteration counter and convergence flag
+            init_state = (w_init, opt_state, jnp.inf, 0, False)
+            final_state = jax.lax.while_loop(cond_fun, body_fun, init_state)
+
+            return final_state[0]  # Return optimized weights
+
+        batch_size = min(1000, X_jax.shape[0])
         n_samples = X_jax.shape[0]
         weights = []
+
         for i in range(0, n_samples, batch_size):
             end = min(i + batch_size, n_samples)
             X_batch = X_jax[i:end]
 
             batch_weights = jax.vmap(optimize_single_sample)(X_batch)
-            weights.append(batch_weights)
+            weights.append(np.array(batch_weights))
 
-        weights_jax = weights[0] if len(weights) == 1 else jnp.concatenate(weights, axis=0)
+        weights_array = np.vstack(weights) if len(weights) > 1 else weights[0]
+        return weights_array
 
-        return np.array(weights_jax)
+    def _transform_with_improved_sgd(self, X: np.ndarray, max_iter: int = 100, tol: float = 1e-5) -> np.ndarray:
+        """Transform using improved SGD with adaptive learning rate and convergence criteria."""
+        X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
+        X_jax = jnp.array(X_scaled)
+
+        archetypes_scaled = (
+            (self.archetypes - self.X_mean) / self.X_std
+            if self.X_mean is not None and self.X_std is not None
+            else self.archetypes
+        )
+        archetypes_jax = jnp.array(archetypes_scaled)
+
+        @jax.jit
+        def optimize_weights_with_convergence(x_sample):
+            w_init = jnp.ones(self.n_archetypes) / self.n_archetypes
+
+            def cond_fun(state):
+                _, _, i, converged = state
+                return jnp.logical_and(jnp.logical_not(converged), i < max_iter)
+
+            def body_fun(state):
+                w, prev_loss, i, _ = state
+
+                # Calculate prediction, error and loss
+                pred = jnp.dot(w, archetypes_jax)
+                error = x_sample - pred
+                loss = jnp.sum(error**2)
+
+                # Check convergence
+                converged = jnp.abs(prev_loss - loss) < tol
+
+                # Adaptive learning rate
+                lr = 0.01 / (1.0 + 0.005 * i)
+
+                # Gradient computation and update
+                grad = -2 * jnp.dot(error, archetypes_jax.T)
+                grad = jnp.clip(grad, -1.0, 1.0)
+
+                # Update weights (only if not converged)
+                w_new = jnp.where(converged, w, w - lr * grad)
+
+                # Project to constraints
+                w_new = jnp.maximum(1e-10, w_new)
+                sum_w = jnp.sum(w_new)
+                w_new = jnp.where(sum_w > 1e-10, w_new / sum_w, jnp.ones_like(w_new) / self.n_archetypes)
+
+                return (w_new, loss, i + 1, converged)
+
+            # Initialize state with iteration counter and convergence flag
+            init_state = (w_init, jnp.inf, 0, False)
+            final_state = jax.lax.while_loop(cond_fun, body_fun, init_state)
+
+            return final_state[0]  # Return final weights
+
+        # Batch processing for memory efficiency
+        batch_size = min(1000, X_jax.shape[0])
+        n_samples = X_jax.shape[0]
+        weights = []
+
+        for i in range(0, n_samples, batch_size):
+            end = min(i + batch_size, n_samples)
+            X_batch = X_jax[i:end]
+
+            batch_weights = jax.vmap(optimize_weights_with_convergence)(X_batch)
+            weights.append(np.array(batch_weights))
+
+        weights_array = np.vstack(weights) if len(weights) > 1 else weights[0]
+        return weights_array
 
     def directional_init(self, X_jax, n_samples, n_features):
         """Generate directions using points that are evenly distributed on a sphere."""
@@ -377,8 +524,22 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         return archetypes, chosen_indices
 
-    def fit(self, X: np.ndarray, normalize: bool = False) -> "ImprovedArchetypalAnalysis":
-        """Fit the model with improved k-means++ initialization."""
+    def fit(
+        self,
+        X: np.ndarray,
+        normalize: bool = False,
+        **kwargs,
+    ) -> "ImprovedArchetypalAnalysis":
+        """Fit the model with improved k-means++ initialization.
+
+        Args:
+            X: Data matrix of shape (n_samples, n_features)
+            normalize: Whether to normalize the data before fitting.
+            **kwargs: Additional keyword arguments for the fit method.
+
+        Returns:
+            self: The fitted model.
+        """
 
         @partial(jax.jit, static_argnums=(3))
         def update_step(params, opt_state, X, iteration):
@@ -595,7 +756,13 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         return self
 
-    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False) -> np.ndarray:
+    def fit_transform(
+        self,
+        X: np.ndarray,
+        y: np.ndarray | None = None,
+        normalize: bool = False,
+        **kwargs,
+    ) -> np.ndarray:
         """
         Fit the model and return the transformed data.
 
@@ -603,12 +770,13 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             X: Data matrix of shape (n_samples, n_features)
             y: Ignored. Present for API consistency by convention.
             normalize: Whether to normalize the data before fitting.
+            **kwargs: Additional keyword arguments for the fit method.
 
         Returns:
             Weight matrix representing each sample as a combination of archetypes
         """
-        model = self.fit(X, normalize=normalize)
-        return np.asarray(model.transform(X))
+        model = self.fit(X, **kwargs)
+        return np.asarray(model.transform(X, **kwargs))
 
     @partial(jax.jit, static_argnums=(0,))
     def project_archetypes(self, archetypes, X) -> jnp.ndarray:
@@ -968,8 +1136,17 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         self.boundary_proximity_history = []  # History of boundary proximity scores
         self.is_outside_history = []  # History of whether archetypes are outside the convex hull
 
-    def fit(self, X: np.ndarray, normalize: bool = False) -> "ArchetypeTracker":
-        """Train the model while documenting the positions of archetypes at each iteration."""
+    def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "ArchetypeTracker":
+        """Train the model while documenting the positions of archetypes at each iteration.
+
+        Args:
+            X: Data matrix of shape (n_samples, n_features)
+            normalize: Whether to normalize the data before fitting.
+            **kwargs: Additional keyword arguments for the fit method.
+
+        Returns:
+            Self
+        """
         # Data preprocessing
         if normalize:
             self.X_mean = X.mean(axis=0)
