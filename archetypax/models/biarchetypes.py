@@ -114,8 +114,12 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Calculate the reconstruction: X ≃ alpha·beta·X·theta·gamma
         # Optimize matrix multiplications to reduce memory usage
-        inner_product = jnp.matmul(jnp.matmul(beta, X_f32), theta)  # (n_row_archetypes, n_col_archetypes)
-        reconstruction = jnp.matmul(jnp.matmul(alpha, inner_product), gamma)  # (n_samples, n_features)
+        inner_product = jnp.matmul(
+            jnp.matmul(beta, X_f32), theta
+        )  # (n_row_archetypes, n_col_archetypes)
+        reconstruction = jnp.matmul(
+            jnp.matmul(alpha, inner_product), gamma
+        )  # (n_samples, n_features)
 
         # Calculate the reconstruction error (element-wise MSE)
         reconstruction_loss = jnp.mean(jnp.sum((X_f32 - reconstruction) ** 2, axis=1))
@@ -198,7 +202,8 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             normalized_direction = jnp.where(
                 direction_norm > 1e-10,
                 direction / direction_norm,
-                jax.random.normal(jax.random.PRNGKey(0), direction.shape) / jnp.sqrt(direction.shape[0]),
+                jax.random.normal(jax.random.PRNGKey(0), direction.shape)
+                / jnp.sqrt(direction.shape[0]),
             )
 
             # Step 2: Project all data points onto this direction vector
@@ -288,7 +293,8 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             normalized_direction = jnp.where(
                 direction_norm > 1e-10,
                 direction / direction_norm,
-                jax.random.normal(jax.random.PRNGKey(0), direction.shape) / jnp.sqrt(direction.shape[0]),
+                jax.random.normal(jax.random.PRNGKey(0), direction.shape)
+                / jnp.sqrt(direction.shape[0]),
             )
 
             # Step 2: Project all features onto this direction to measure extremeness
@@ -364,7 +370,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Debug information
         self.logger.info(f"Data shape: {X_jax.shape}")
-        self.logger.info(f"Data range: min={float(jnp.min(X_jax)):.4f}, max={float(jnp.max(X_jax)):.4f}")
+        self.logger.info(
+            f"Data range: min={float(jnp.min(X_jax)):.4f}, max={float(jnp.max(X_jax)):.4f}"
+        )
         self.logger.info(f"Row archetypes: {self.n_row_archetypes}")
         self.logger.info(f"Column archetypes: {self.n_col_archetypes}")
 
@@ -425,7 +433,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Step 3: Add controlled stochastic noise to promote exploration
         # This prevents archetypes from being too rigidly defined at initialization
         self.rng_key, subkey = jax.random.split(self.rng_key)
-        noise = jax.random.uniform(subkey, beta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32)
+        noise = jax.random.uniform(
+            subkey, beta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32
+        )
         beta_init = beta_init + noise
 
         # Step 4: Ensure proper normalization to maintain simplex constraints
@@ -483,7 +493,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Step 5: Add controlled noise to promote exploration
         self.rng_key, subkey = jax.random.split(self.rng_key)
-        noise = jax.random.uniform(subkey, theta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32)
+        noise = jax.random.uniform(
+            subkey, theta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32
+        )
         theta_init = theta_init + noise
 
         # Step 6: Ensure proper normalization to maintain simplex constraints
@@ -500,7 +512,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Create a warmup schedule that linearly increases from 0 to peak learning rate
         # Use a much lower learning rate to prevent divergence
         reduced_lr = self.learning_rate * 0.05  # Reduce learning rate by 20x
-        warmup_schedule = optax.linear_schedule(init_value=0.0, end_value=reduced_lr, transition_steps=warmup_steps)
+        warmup_schedule = optax.linear_schedule(
+            init_value=0.0, end_value=reduced_lr, transition_steps=warmup_steps
+        )
 
         # Create a decay schedule that exponentially decays from peak to minimum learning rate
         decay_schedule = optax.exponential_decay(
@@ -512,7 +526,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         )
 
         # Combine the schedules
-        schedule = optax.join_schedules(schedules=[warmup_schedule, decay_schedule], boundaries=[warmup_steps])
+        schedule = optax.join_schedules(
+            schedules=[warmup_schedule, decay_schedule], boundaries=[warmup_steps]
+        )
 
         # Create a sophisticated optimizer chain with:
         # 1. Gradient clipping to prevent exploding gradients
@@ -520,7 +536,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # 3. Weight decay for regularization
         optimizer = optax.chain(
             optax.clip_by_global_norm(0.5),  # More aggressive clipping to prevent divergence
-            optax.scale_by_adam(b1=0.9, b2=0.999, eps=1e-8),  # Adam optimizer with standard parameters
+            optax.scale_by_adam(
+                b1=0.9, b2=0.999, eps=1e-8
+            ),  # Adam optimizer with standard parameters
             optax.add_decayed_weights(weight_decay=1e-6),  # Very subtle weight decay
             optax.scale_by_schedule(schedule),  # Apply our custom learning rate schedule
         )
@@ -626,10 +644,12 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 if i % 25 == 0 or i < 5:
                     # Calculate performance metrics for monitoring optimization trajectory
                     if len(self.loss_history) > 1:
-                        avg_last_5 = sum(self.loss_history[-min(5, len(self.loss_history)) :]) / min(
-                            5, len(self.loss_history)
+                        avg_last_5 = sum(
+                            self.loss_history[-min(5, len(self.loss_history)) :]
+                        ) / min(5, len(self.loss_history))
+                        improvement_rate = (
+                            (self.loss_history[0] - loss_value) / (i + 1) if i > 0 else 0
                         )
-                        improvement_rate = (self.loss_history[0] - loss_value) / (i + 1) if i > 0 else 0
                         self.logger.info(
                             f"Iteration {i:4d} | Loss: {loss_value:.6f} | Avg(5): {avg_last_5:.6f} | Improvement rate: {improvement_rate:.8f}"
                         )
@@ -639,8 +659,12 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                     # Provide in-depth diagnostics at major milestones
                     if i % 100 == 0 and i > 0:
                         # Analyze archetype characteristics
-                        alpha_sparsity = jnp.mean(jnp.sum(params["alpha"] > 0.01, axis=1) / params["alpha"].shape[1])
-                        gamma_sparsity = jnp.mean(jnp.sum(params["gamma"] > 0.01, axis=0) / params["gamma"].shape[0])
+                        alpha_sparsity = jnp.mean(
+                            jnp.sum(params["alpha"] > 0.01, axis=1) / params["alpha"].shape[1]
+                        )
+                        gamma_sparsity = jnp.mean(
+                            jnp.sum(params["gamma"] > 0.01, axis=0) / params["gamma"].shape[0]
+                        )
                         self.logger.info(
                             f"  - Alpha sparsity: {float(alpha_sparsity):.4f} | Gamma sparsity: {float(gamma_sparsity):.4f}"
                         )
@@ -671,7 +695,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         self.gamma = np.array(params["gamma"])
 
         # Calculate biarchetypes (Z = beta·X·theta)
-        self.biarchetypes = np.array(np.matmul(np.matmul(self.beta, np.asanyarray(X_jax)), self.theta))
+        self.biarchetypes = np.array(
+            np.matmul(np.matmul(self.beta, np.asanyarray(X_jax)), self.theta)
+        )
 
         # For compatibility with parent class
         self.archetypes = np.array(np.matmul(self.beta, X_jax))  # Row archetypes
@@ -700,7 +726,11 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             raise ValueError("Model must be fitted before transform")
 
         # Scale input data
-        X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
+        X_scaled = (
+            (X - self.X_mean) / self.X_std
+            if self.X_mean is not None and self.X_std is not None
+            else X
+        )
         jnp.array(X_scaled, dtype=jnp.float32)
 
         # Use pre-trained biarchetypes (avoid recalculating biarchetypes for new data)
@@ -715,11 +745,15 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             # Optimize using gradient descent
             for _ in range(100):  # 100 optimization steps
                 # Calculate reconstruction
-                reconstruction = jnp.matmul(jnp.matmul(alpha, biarchetypes_jax), jnp.asarray(self.gamma))
+                reconstruction = jnp.matmul(
+                    jnp.matmul(alpha, biarchetypes_jax), jnp.asarray(self.gamma)
+                )
                 # Calculate error
                 error = x_row - reconstruction
                 # Calculate gradient
-                grad = -2 * jnp.matmul(error, jnp.matmul(biarchetypes_jax, jnp.asarray(self.gamma)).T)
+                grad = -2 * jnp.matmul(
+                    error, jnp.matmul(biarchetypes_jax, jnp.asarray(self.gamma)).T
+                )
                 # Update weights
                 alpha = alpha - 0.01 * grad
                 # Project onto constraints (non-negativity and sum to 1)
@@ -737,7 +771,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         result = (np.asarray(alpha_new), np.asarray(gamma_new))
         return result
 
-    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False, **kwargs) -> Any:
+    def fit_transform(
+        self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False, **kwargs
+    ) -> Any:
         """
         Fit the model and transform the data.
 
