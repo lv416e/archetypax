@@ -114,7 +114,19 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         """
         # Preprocess data: apply same normalization as during fit
         if self.X_mean is not None and self.X_std is not None:
-            X_scaled = (X - self.X_mean) / self.X_std if self.normalize else X.copy()
+            # Convert pandas Series to numpy arrays if needed
+            X_mean = self.X_mean.values if hasattr(self.X_mean, "values") else self.X_mean
+            X_std = self.X_std.values if hasattr(self.X_std, "values") else self.X_std
+
+            # Make sure dimensions are compatible
+            if X.shape[1] != len(X_mean):
+                # If dimensions don't match, log warning and skip normalization
+                self.logger.warning(
+                    f"Dimension mismatch for normalization: X has {X.shape[1]} features, but mean has {len(X_mean)} elements. Skipping normalization."
+                )
+                X_scaled = X.copy()
+            else:
+                X_scaled = (X - X_mean) / X_std if self.normalize else X.copy()
         else:
             X_scaled = X.copy()
 
@@ -154,12 +166,26 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         X_jax = jnp.array(X)
 
-        # Scale archetypes
-        archetypes_scaled = (
-            (self.archetypes - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes
-        )
+        # Get archetypes (convert from numpy or pandas if needed)
+        archetypes_np = np.array(self.archetypes)
+
+        # Apply scaling if necessary
+        if self.X_mean is not None and self.X_std is not None:
+            # Convert pandas Series to numpy arrays if needed
+            X_mean = self.X_mean.values if hasattr(self.X_mean, "values") else self.X_mean
+            X_std = self.X_std.values if hasattr(self.X_std, "values") else self.X_std
+
+            # Check if dimensions are compatible
+            if archetypes_np.shape[1] == len(X_mean):
+                archetypes_scaled = (archetypes_np - X_mean) / X_std
+            else:
+                self.logger.warning(
+                    f"Dimension mismatch for archetype scaling: archetypes has shape {archetypes_np.shape}, but mean has {len(X_mean)} elements. Skipping scaling."
+                )
+                archetypes_scaled = archetypes_np
+        else:
+            archetypes_scaled = archetypes_np
+
         archetypes_jax = jnp.array(archetypes_scaled)
 
         @jax.jit
@@ -232,11 +258,26 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         """
         X_jax = jnp.array(X)
 
-        archetypes_scaled = (
-            (self.archetypes - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes
-        )
+        # Get archetypes (convert from numpy or pandas if needed)
+        archetypes_np = np.array(self.archetypes)
+
+        # Apply scaling if necessary
+        if self.X_mean is not None and self.X_std is not None:
+            # Convert pandas Series to numpy arrays if needed
+            X_mean = self.X_mean.values if hasattr(self.X_mean, "values") else self.X_mean
+            X_std = self.X_std.values if hasattr(self.X_std, "values") else self.X_std
+
+            # Check if dimensions are compatible
+            if archetypes_np.shape[1] == len(X_mean):
+                archetypes_scaled = (archetypes_np - X_mean) / X_std
+            else:
+                self.logger.warning(
+                    f"Dimension mismatch for archetype scaling: archetypes has shape {archetypes_np.shape}, but mean has {len(X_mean)} elements. Skipping scaling."
+                )
+                archetypes_scaled = archetypes_np
+        else:
+            archetypes_scaled = archetypes_np
+
         archetypes_jax = jnp.array(archetypes_scaled)
 
         @jax.jit
@@ -309,11 +350,26 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         """
         X_jax = jnp.array(X)
 
-        archetypes_scaled = (
-            (self.archetypes - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes
-        )
+        # Get archetypes (convert from numpy or pandas if needed)
+        archetypes_np = np.array(self.archetypes)
+
+        # Apply scaling if necessary
+        if self.X_mean is not None and self.X_std is not None:
+            # Convert pandas Series to numpy arrays if needed
+            X_mean = self.X_mean.values if hasattr(self.X_mean, "values") else self.X_mean
+            X_std = self.X_std.values if hasattr(self.X_std, "values") else self.X_std
+
+            # Check if dimensions are compatible
+            if archetypes_np.shape[1] == len(X_mean):
+                archetypes_scaled = (archetypes_np - X_mean) / X_std
+            else:
+                self.logger.warning(
+                    f"Dimension mismatch for archetype scaling: archetypes has shape {archetypes_np.shape}, but mean has {len(X_mean)} elements. Skipping scaling."
+                )
+                archetypes_scaled = archetypes_np
+        else:
+            archetypes_scaled = archetypes_np
+
         archetypes_jax = jnp.array(archetypes_scaled)
 
         @jax.jit
@@ -688,13 +744,17 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             return new_params, opt_state, loss
 
         # Preprocess data: scale for improved stability
-        self.X_mean = np.mean(X, axis=0)
-        self.X_std = np.std(X, axis=0)
+        # Convert pandas DataFrame/Series to numpy arrays if needed
+        X_np = X.values if hasattr(X, "values") else np.array(X)
+
+        # Calculate mean and std, ensuring they are numpy arrays
+        self.X_mean = np.mean(X_np, axis=0)
+        self.X_std = np.std(X_np, axis=0)
         # Prevent division by zero with explicit type casting
         if self.X_std is not None:
             self.X_std = np.where(self.X_std < 1e-10, np.ones_like(self.X_std), self.X_std)
 
-        X_scaled = (X - self.X_mean) / self.X_std if self.normalize else X.copy()
+        X_scaled = (X_np - self.X_mean) / self.X_std if normalize else X_np.copy()
 
         # Convert to JAX array
         X_jax = jnp.array(X_scaled, dtype=jnp.float32)

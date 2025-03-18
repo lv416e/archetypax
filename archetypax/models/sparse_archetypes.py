@@ -201,10 +201,10 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             Array containing the sparsity score for each archetype.
             Higher values indicate more sparse archetypes.
         """
-        if not hasattr(self, "archetypes_") or self.archetypes_ is None:
-            raise ValueError("Model has not been fitted yet.")
+        if not hasattr(self, "archetypes") or self.archetypes is None:
+            raise ValueError("The model has not yet been fitted.")
 
-        archetypes = self.archetypes_
+        archetypes = self.archetypes
         n_archetypes, n_features = archetypes.shape
         sparsity_scores = np.zeros(n_archetypes)
 
