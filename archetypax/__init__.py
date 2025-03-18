@@ -7,7 +7,8 @@ import sys
 import types
 from typing import Any
 
-from . import models, tools
+from . import logger, models, tools
+from .logger import get_logger, get_message
 from .models.archetypes import ImprovedArchetypalAnalysis
 
 # Direct imports for simplified usage
