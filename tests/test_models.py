@@ -1,10 +1,11 @@
 """Unit tests for archetypax models."""
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from sklearn.datasets import make_blobs
 
-from archetypax.models.archetypes import ImprovedArchetypalAnalysis
+from archetypax.models.archetypes import ArchetypeTracker, ImprovedArchetypalAnalysis
 from archetypax.models.base import ArchetypalAnalysis
 from archetypax.models.biarchetypes import BiarchetypalAnalysis
 
@@ -205,6 +206,113 @@ class TestImprovedArchetypalAnalysis:
 
         weights = model.transform(new_data)
         assert weights.shape == (5, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+    def test_transform_with_adam(self, small_sample_data):
+        """Test transform with Adam optimizer."""
+        model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=10)
+        model.fit(small_sample_data)
+
+        weights = model.transform(small_sample_data, method="adam", max_iter=30)
+        assert weights.shape == (20, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+        # Test with new data
+        new_data = np.random.rand(5, 3)
+        weights = model.transform(new_data, method="adam", max_iter=30)
+        assert weights.shape == (5, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+    def test_transform_with_sgd(self, small_sample_data):
+        """Test transform with SGD optimizer."""
+        model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=10)
+        model.fit(small_sample_data)
+
+        weights = model.transform(small_sample_data, method="sgd", max_iter=50)
+        assert weights.shape == (20, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+        # Test with new data
+        new_data = np.random.rand(5, 3)
+        weights = model.transform(new_data, method="sgd", max_iter=50)
+        assert weights.shape == (5, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+    def test_transform_with_lbfgs(self, small_sample_data):
+        """Test transform with L-BFGS optimizer."""
+        model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=10)
+        model.fit(small_sample_data)
+
+        weights = model.transform(small_sample_data, method="lbfgs", max_iter=20)
+        assert weights.shape == (20, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+        # Test with new data
+        new_data = np.random.rand(5, 3)
+        weights = model.transform(new_data, method="lbfgs", max_iter=20)
+        assert weights.shape == (5, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+    def test_transform_with_adaptive(self, small_sample_data):
+        """Test transform with adaptive method selection."""
+        model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=10)
+        model.fit(small_sample_data)
+
+        # Small dataset - should choose lbfgs
+        weights = model.transform(small_sample_data, method="adaptive")
+        assert weights.shape == (20, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+        # Verify different size datasets use different methods
+        # Create medium and large datasets for testing adaptive selection
+        medium_data = np.random.rand(1500, 3)
+        large_data = np.random.rand(15000, 3)
+
+        # These should exercise different code paths
+        # Medium dataset should select adam
+        weights_medium = model.transform(medium_data, method="adaptive", max_iter=5)
+        assert weights_medium.shape == (1500, 2)
+        assert np.allclose(np.sum(weights_medium, axis=1), 1.0)
+
+        # Large dataset should select sgd
+        weights_large = model.transform(large_data, method="adaptive", max_iter=5)
+        assert weights_large.shape == (15000, 2)
+        assert np.allclose(np.sum(weights_large, axis=1), 1.0)
+
+    def test_transform_convergence(self, small_sample_data):
+        """Test early convergence in transform methods."""
+        model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=10)
+        model.fit(small_sample_data)
+
+        # Test with very loose tolerance that should converge quickly
+        weights_loose = model.transform(small_sample_data, method="adam", tol=1e-1, max_iter=100)
+        assert weights_loose.shape == (20, 2)
+
+        # Test with very strict tolerance that should require more iterations
+        weights_strict = model.transform(small_sample_data, method="adam", tol=1e-10, max_iter=100)
+        assert weights_strict.shape == (20, 2)
+
+        # Both should satisfy simplex constraints regardless of convergence
+        assert np.allclose(np.sum(weights_loose, axis=1), 1.0)
+        assert np.allclose(np.sum(weights_strict, axis=1), 1.0)
+
+    def test_kwargs_passing(self, small_sample_data):
+        """Test kwargs are properly passed through the API."""
+        model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=10)
+
+        # Test fit_transform with kwargs
+        weights = model.fit_transform(small_sample_data, normalize=True, method="adam", max_iter=15, tol=1e-4)
+
+        assert weights.shape == (20, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+        # Test separate fit and transform with kwargs
+        model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=10)
+        model.fit(small_sample_data, normalize=True)
+
+        weights = model.transform(small_sample_data, method="lbfgs", max_iter=15, tol=1e-4)
+
+        assert weights.shape == (20, 2)
         assert np.allclose(np.sum(weights, axis=1), 1.0)
 
     @pytest.mark.slow
@@ -474,6 +582,147 @@ class TestBiarchetypalAnalysis:
         # Confirm simplex constraint adherence
         assert np.allclose(np.sum(alpha_new, axis=1), 1.0)
         assert np.allclose(np.sum(gamma_new, axis=0), 1.0)
+
+
+class TestArchetypeTracker:
+    """Test suite for the ArchetypeTracker class."""
+
+    def test_initialization(self):
+        """Verify proper initialization of tracker parameters."""
+        tracker = ArchetypeTracker(n_archetypes=3)
+
+        # Check base class parameters are properly initialized
+        assert tracker.n_archetypes == 3
+        assert tracker.max_iter == 500
+        assert tracker.tol == 1e-6
+        assert tracker.archetypes is None
+        assert tracker.weights is None
+
+        # Check tracker-specific attributes
+        assert tracker.archetype_history == []
+        assert tracker.boundary_proximity_history == []
+        assert tracker.is_outside_history == []
+        assert tracker.archetype_grad_scale == 1.0
+        assert tracker.noise_scale == 0.02
+        assert tracker.exploration_noise_scale == 0.05
+
+    def test_fit(self, small_sample_data):
+        """Test that fit method properly records archetype movement history."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=10)
+        tracker.fit(small_sample_data)
+
+        # Check that base functionality works
+        assert tracker.archetypes is not None
+        assert tracker.weights is not None
+        assert tracker.archetypes.shape == (2, 3)
+        assert tracker.weights.shape == (20, 2)
+
+        # Check tracker-specific outputs
+        assert len(tracker.archetype_history) > 0
+        assert len(tracker.boundary_proximity_history) > 0
+        assert len(tracker.is_outside_history) > 0
+
+        # Check history shape consistency
+        assert tracker.archetype_history[0].shape == (2, 3)
+        assert len(tracker.boundary_proximity_history) == len(tracker.is_outside_history)
+        assert isinstance(tracker.boundary_proximity_history[0], float)
+
+        # Test loss history
+        assert len(tracker.loss_history) > 0
+        assert all(isinstance(loss, float) for loss in tracker.loss_history)
+
+    def test_transform(self, small_sample_data):
+        """Test transform still works properly in the tracker."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=10)
+        tracker.fit(small_sample_data)
+
+        # Test transform with same data
+        weights = tracker.transform(small_sample_data)
+        assert weights.shape == (20, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+        # Test with new data
+        new_data = np.random.rand(5, 3)
+        weights = tracker.transform(new_data)
+        assert weights.shape == (5, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+    def test_calculate_weights(self, small_sample_data):
+        """Test internal _calculate_weights method."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=10)
+        tracker.fit(small_sample_data)
+
+        # Get archetypes in JAX format
+        X_jax = jnp.array(small_sample_data)
+        archetypes_jax = jnp.array(tracker.archetypes)
+
+        # Calculate weights
+        weights = tracker._calculate_weights(X_jax, archetypes_jax)
+
+        # Check shape and constraints
+        assert weights.shape == (20, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+    def test_check_archetypes_outside(self, small_sample_data):
+        """Test method for checking if archetypes are outside convex hull."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=10)
+        tracker.fit(small_sample_data)
+
+        # Get test data in JAX format
+        X_jax = jnp.array(small_sample_data)
+        archetypes_jax = jnp.array(tracker.archetypes)
+
+        # Check if archetypes are outside convex hull
+        is_outside = tracker._check_archetypes_outside(archetypes_jax, X_jax)
+
+        # Verify result shape and type
+        assert is_outside.shape == (2,)
+        assert is_outside.dtype == bool
+
+    def test_constrain_to_convex_hull(self, small_sample_data):
+        """Test method for constraining archetypes to convex hull."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=10)
+        tracker.fit(small_sample_data)
+
+        # Get test data in JAX format
+        X_jax = jnp.array(small_sample_data)
+        archetypes_jax = jnp.array(tracker.archetypes)
+
+        # Constrain archetypes to convex hull
+        constrained = tracker._constrain_to_convex_hull_batch(archetypes_jax, X_jax)
+
+        # Verify result shape
+        assert constrained.shape == (2, 3)
+
+        # Check if any archetypes are outside after constraint
+        is_outside = tracker._check_archetypes_outside(constrained, X_jax)
+        assert not np.any(is_outside)  # None should be outside after constraint
+
+    @pytest.mark.skipif(True, reason="Matplotlib visualization test skipped by default")
+    def test_visualize_movement(self, small_sample_data):
+        """Test visualization method for archetype movement."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=10)
+        tracker.fit(small_sample_data)
+
+        # Try to visualize movement with default parameters
+        fig = tracker.visualize_movement()
+
+        # If matplotlib is available, this should return a figure
+        if fig is not None:
+            assert str(type(fig)).find("matplotlib.figure.Figure") != -1
+
+    @pytest.mark.skipif(True, reason="Matplotlib visualization test skipped by default")
+    def test_visualize_boundary_proximity(self, small_sample_data):
+        """Test visualization method for boundary proximity."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=10)
+        tracker.fit(small_sample_data)
+
+        # Try to visualize boundary proximity
+        fig = tracker.visualize_boundary_proximity()
+
+        # If matplotlib is available, this should return a figure
+        if fig is not None:
+            assert str(type(fig)).find("matplotlib.figure.Figure") != -1
 
 
 class TestCommonModelFunctionality:
