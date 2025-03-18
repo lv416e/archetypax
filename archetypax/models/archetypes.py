@@ -36,9 +36,15 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             learning_rate: Learning rate for optimization
             lambda_reg: Regularization parameter
             normalize: Whether to normalize the data
-            projection_method: Method for projecting archetypes
             projection_alpha: Weight for extreme point
+            projection_method: Method for projecting archetypes
+                - "cbap": Use CBAP projection
+                - "convex_hull": Use convex hull vertices
+                - "knn": Use k-nearest neighbors
             archetype_init_method: Method for initializing archetypes
+                - "directional": Use directions from a sphere
+                - "qhull": Use convex hull vertices
+                - "kmeans++": Use k-means++ initialization
         """
         self.n_archetypes = n_archetypes
         self.max_iter = max_iter
@@ -823,7 +829,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         # Combined loss with reconstruction, entropy regularization, and boundary incentive
         # Negative sign for boundary_incentive as higher values should reduce the loss
-        total_loss = reconstruction_loss + self.lambda_reg * entropy_reg - 0.1 * boundary_incentive
+        total_loss = reconstruction_loss + self.lambda_reg * entropy_reg - 0.001 * boundary_incentive
 
         return total_loss.astype(jnp.float32)
 
@@ -1410,7 +1416,7 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
 
         # We use a significantly reduced boundary incentive for tracking stability
         # This matches the parent class boundary incentive level
-        total_loss = reconstruction_loss + self.lambda_reg * entropy_reg - 0.005 * boundary_incentive
+        total_loss = reconstruction_loss + self.lambda_reg * entropy_reg - 0.001 * boundary_incentive
 
         return total_loss.astype(jnp.float32)
 
