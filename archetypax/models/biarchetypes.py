@@ -369,14 +369,14 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         self.logger.info(f"Column archetypes: {self.n_col_archetypes}")
 
         # Initialize alpha (row coefficients) with more stable initialization
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         alpha_init = jax.random.uniform(
             subkey, (n_samples, self.n_row_archetypes), minval=0.1, maxval=0.9, dtype=jnp.float32
         )
         alpha_init = self.project_row_coefficients(alpha_init)
 
         # Initialize gamma (column coefficients)
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         gamma_init = jax.random.uniform(
             subkey, (self.n_col_archetypes, n_features), minval=0.1, maxval=0.9, dtype=jnp.float32
         )
@@ -384,7 +384,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Initialize beta (row archetypes) using sophisticated k-means++ initialization
         # This approach ensures diverse starting points that are well-distributed across the data space
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
 
         # Step 1: Select initial centroids using k-means++ algorithm
         # This ensures our archetypes start from diverse positions in the data space
@@ -411,7 +411,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 min_dists = min_dists.at[idx].set(0.0)
 
             # Select next point with probability proportional to squared distance
-            self.key, subkey = jax.random.split(self.key)
+            self.rng_key, subkey = jax.random.split(self.rng_key)
             probs = min_dists / (jnp.sum(min_dists) + 1e-10)
             next_idx = jax.random.choice(subkey, n_samples, p=probs)
             selected_indices = selected_indices.at[i].set(next_idx)
@@ -424,7 +424,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Step 3: Add controlled stochastic noise to promote exploration
         # This prevents archetypes from being too rigidly defined at initialization
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         noise = jax.random.uniform(subkey, beta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32)
         beta_init = beta_init + noise
 
@@ -436,7 +436,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Initialize theta (column archetypes) with advanced diversity-maximizing approach
         # This ensures column archetypes capture the most distinctive feature patterns
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
 
         # Step 1: Transpose data for feature-centric operations
         X_T = X_jax.T  # Shape: (n_features, n_samples)
@@ -450,7 +450,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         selected_features = jnp.zeros(self.n_col_archetypes, dtype=jnp.int32)
 
         # Select first feature with probability proportional to variance
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         probs = feature_variance / (jnp.sum(feature_variance) + 1e-10)
         first_idx = jax.random.choice(subkey, n_features, p=probs)
         selected_features = selected_features.at[0].set(first_idx)
@@ -482,7 +482,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             theta_init = theta_init.at[next_idx, i].set(1.0)
 
         # Step 5: Add controlled noise to promote exploration
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         noise = jax.random.uniform(subkey, theta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32)
         theta_init = theta_init + noise
 

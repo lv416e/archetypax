@@ -69,6 +69,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             )
         )
 
+        # Ensure JAX RNG key is properly initialized from random seed
+        self.rng_key = jax.random.key(random_seed)
+
         self.n_archetypes = n_archetypes
         self.max_iter = max_iter
         self.tol = tol
@@ -381,9 +384,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             z = jnp.cos(phi)
             directions = jnp.column_stack([x, y, z])
         else:  # For higher dimensions, employ a repulsion method
-            # Generate initial directions randomly
-            self.key, subkey = jax.random.split(self.key)
-            directions = jax.random.normal(subkey, (self.n_archetypes, n_features))
+            # Generate initial directions randomly using the instance's key
+            self.rng_key, direction_key = jax.random.split(self.rng_key)
+            directions = jax.random.normal(direction_key, (self.n_archetypes, n_features))
 
             # Normalize the direction vectors
             norms = jnp.linalg.norm(directions, axis=1, keepdims=True)
@@ -446,7 +449,8 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         archetypes = jax.lax.fori_loop(0, self.n_archetypes, find_extreme_point, archetypes)
 
-        return archetypes, jnp.zeros(self.n_archetypes, dtype=jnp.int32)
+        indices = jnp.zeros(self.n_archetypes, dtype=jnp.int32)
+        return archetypes, indices
 
     def qhull_init(self, X_jax, n_samples, n_features):
         """Initialize archetypes using convex hull vertices via QHull algorithm."""
@@ -506,9 +510,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             # How many more archetypes do we need?
             remaining = self.n_archetypes - len(vertices)
 
-            # Sample additional points randomly
-            self.key, subkey = jax.random.split(self.key)
-            additional_indices = jax.random.choice(subkey, n_samples, shape=(remaining,), replace=False, p=None)
+            # Sample additional points randomly using the instance's key
+            self.rng_key, choice_key = jax.random.split(self.rng_key)
+            additional_indices = jax.random.choice(choice_key, n_samples, shape=(remaining,), replace=False, p=None)
             selected_vertices.extend(additional_indices)
 
         # Use the selected vertices as initial archetypes
@@ -518,9 +522,11 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     def kmeans_pp_init(self, X_jax, n_samples, n_features):
         """More efficient k-means++ style initialization using JAX."""
+        # Use the instance's RNG key
+        self.rng_key, first_center_key = jax.random.split(self.rng_key)
+
         # Randomly select the first center
-        self.key, subkey = jax.random.split(self.key)
-        first_idx = jax.random.randint(subkey, (), 0, n_samples)
+        first_idx = jax.random.randint(first_center_key, (), 0, n_samples)
 
         # Store selected indices and centers
         chosen_indices = jnp.zeros(self.n_archetypes, dtype=jnp.int32)
@@ -546,8 +552,8 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             sum_dists = jnp.sum(min_dists) + 1e-10
             probs = min_dists / sum_dists
 
-            self.key, subkey = jax.random.split(self.key)
-            next_idx = jax.random.choice(subkey, n_samples, p=probs)
+            self.rng_key, choice_key = jax.random.split(self.rng_key)
+            next_idx = jax.random.choice(choice_key, n_samples, p=probs)
 
             # Update selected indices and centers
             chosen_indices = chosen_indices.at[i].set(next_idx)
@@ -675,10 +681,12 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             get_message("data", "data_shape", shape=X_jax.shape, min=float(jnp.min(X_jax)), max=float(jnp.max(X_jax)))
         )
 
+        # Use the instance's RNG key for weight initialization
+        self.rng_key, weights_key = jax.random.split(self.rng_key)
+
         # Initialize weights (more stable initialization)
-        self.key, subkey = jax.random.split(self.key)
         weights_init = jax.random.uniform(
-            subkey,
+            weights_key,
             (n_samples, self.n_archetypes),
             minval=0.1,
             maxval=0.9,
@@ -950,25 +958,28 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         centroid = jnp.mean(X, axis=0)
 
         # For each archetype, find a set of extreme points
-        def _find_extreme_points(archetype):
+        def _find_extreme_points(archetype, rng_key):
             # Generate multiple random directions around the archetype direction
-            key = jax.random.key(0)  # Fixed seed for deterministic behavior
+            # Use the provided RNG key for stochastic operations
             n_directions = 5
 
             # Direction from centroid to archetype
             main_direction = archetype - centroid
             main_direction_norm = jnp.linalg.norm(main_direction)
 
+            # Split the key for different random operations
+            rng_key, direction_key = jax.random.split(rng_key)
+
             # Avoid division by zero
             main_direction = jnp.where(
                 main_direction_norm > 1e-10,
                 main_direction / main_direction_norm,
-                jax.random.normal(key, shape=main_direction.shape),
+                jax.random.normal(direction_key, shape=main_direction.shape),
             )
 
             # Generate random perturbations of the main direction
-            key, subkey = jax.random.split(key)
-            perturbations = jax.random.normal(subkey, shape=(n_directions, main_direction.shape[0]))
+            rng_key, perturbation_key = jax.random.split(rng_key)
+            perturbations = jax.random.normal(perturbation_key, shape=(n_directions, main_direction.shape[0]))
 
             # Normalize the perturbations
             perturbation_norms = jnp.linalg.norm(perturbations, axis=1, keepdims=True)
@@ -1005,10 +1016,19 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             projected = jnp.sum(weights[:, jnp.newaxis] * extreme_points, axis=0)
 
-            return projected
+            return projected, rng_key
 
-        # Apply the projection to each archetype
-        projected_archetypes = jax.vmap(_find_extreme_points)(archetypes)
+        # Derive RNG keys from the instance key for each archetype
+        self.rng_key, subkey = jax.random.split(self.rng_key)
+        rng_keys = jax.random.split(subkey, archetypes.shape[0])
+
+        # Process each archetype with its own RNG key
+        projected_archetypes = jnp.zeros_like(archetypes)
+
+        # Apply projection to each archetype
+        for i in range(archetypes.shape[0]):
+            projected, _ = _find_extreme_points(archetypes[i], rng_keys[i])
+            projected_archetypes = projected_archetypes.at[i].set(projected)
 
         return jnp.asarray(projected_archetypes)
 

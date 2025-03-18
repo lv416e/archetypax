@@ -38,7 +38,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         self.max_iter = max_iter
         self.tol = tol
         self.random_seed = random_seed
-        self.key = jax.random.key(random_seed)
+        self.rng_key = jax.random.key(random_seed)
         self.learning_rate = learning_rate
 
         # Initialize logger
@@ -142,19 +142,19 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         self.logger.info(f"Data range: min={jnp.min(X_jax):.4f}, max={jnp.max(X_jax):.4f}")
 
         # Initialize weights (more stable initialization)
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         weights_init = jax.random.uniform(subkey, (n_samples, self.n_archetypes), minval=0.1, maxval=0.9)
         weights_init = self.project_weights(weights_init)
 
         # Initialize archetypes (k-means++ style initialization)
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         # Select first archetype randomly
         first_idx = jax.random.randint(subkey, (), 0, n_samples)
         chosen_indices = [int(first_idx)]
 
         # Select remaining archetypes based on distance
         for _ in range(1, self.n_archetypes):
-            self.key, subkey = jax.random.split(self.key)
+            self.rng_key, subkey = jax.random.split(self.rng_key)
 
             # Calculate minimum distance to already selected archetypes
             min_dists_list = []
