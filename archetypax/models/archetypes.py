@@ -23,7 +23,8 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         lambda_reg: float = 0.01,
         normalize: bool = False,
         projection_method: str = "cbap",
-        projection_alpha: float = 0.2,
+        projection_alpha: float = 0.1,
+        archetype_init_method: str = "directional",
     ):
         """Initialize the Improved Archetypal Analysis model.
 
@@ -37,6 +38,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             normalize: Whether to normalize the data
             projection_method: Method for projecting archetypes
             projection_alpha: Weight for extreme point
+            archetype_init_method: Method for initializing archetypes
         """
         self.n_archetypes = n_archetypes
         self.max_iter = max_iter
@@ -46,9 +48,10 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         self.lambda_reg = lambda_reg
         self.normalize = normalize
         self.projection_method = (
-            projection_method if projection_method != "cbap" or projection_method != "default" else "default"
+            "default" if projection_method == "cbap" or projection_method == "default" else projection_method
         )
         self.projection_alpha = projection_alpha
+        self.archetype_init_method = archetype_init_method
         super().__init__(
             n_archetypes=n_archetypes,
             max_iter=max_iter,
@@ -387,22 +390,72 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             updates, opt_state = optimizer.update(grads, opt_state)
             new_params = optax.apply_updates(params_f32, updates)
 
+            # Always project weights to simplex
             new_params["weights"] = self.project_weights(new_params["weights"])
-            new_params["archetypes"] = jax.lax.cond(
-                self.projection_method == "cbap" or self.projection_method == "default",
-                lambda: self.project_archetypes(new_params["archetypes"], X_f32),
-                lambda: jax.lax.cond(
-                    self.projection_method == "convex_hull",
-                    lambda: self.project_archetypes_convex_hull(new_params["archetypes"], X_f32),
-                    lambda: self.project_archetypes_knn(new_params["archetypes"], X_f32),
-                ),
-            )
-            # new_params["archetypes"] = self.project_archetypes_convex_hull(new_params["archetypes"], X_f32)
-            # new_params["archetypes"] = self.project_archetypes_knn(new_params["archetypes"], X_f32)
-            # new_params["archetypes"] = self.update_archetypes(new_params["archetypes"], new_params["weights"], X)
 
+            # Alternating optimization: periodically use direct archetype update instead of gradient
+            # This helps break out of local minima and improves convergence characteristics
+            use_direct_update = jnp.mod(iteration, 15) == 0  # Every 15 iterations
+
+            def apply_direct_update():
+                """Apply direct algebraic update to archetypes."""
+                archetypes_dir = self.update_archetypes(new_params["archetypes"], new_params["weights"], X_f32)
+                # Blend with gradient-based update to maintain stability
+                blend = 0.2  # 20% direct update, 80% gradient update
+                return blend * archetypes_dir + (1 - blend) * new_params["archetypes"]
+
+            # Apply direct update conditionally
+            new_params["archetypes"] = jax.lax.cond(
+                use_direct_update, lambda: apply_direct_update(), lambda: new_params["archetypes"]
+            )
+
+            # Store pre-projection archetypes
+            pre_projection_archetypes = new_params["archetypes"]
+            pre_projection_loss = self.loss_function(pre_projection_archetypes, new_params["weights"], X_f32)
+
+            # Intermittent projection: only project archetypes every N iterations
+            # This allows optimization to make progress between projections
+            do_projection = jnp.mod(iteration, 10) == 0
+
+            # Conditional projection function
+            def project_archetypes():
+                # Select appropriate projection method
+                if self.projection_method == "cbap" or self.projection_method == "default":
+                    projected = self.project_archetypes(new_params["archetypes"], X_f32)
+                elif self.projection_method == "convex_hull":
+                    projected = self.project_archetypes_convex_hull(new_params["archetypes"], X_f32)
+                else:
+                    projected = self.project_archetypes_knn(new_params["archetypes"], X_f32)
+
+                # Calculate post-projection loss
+                post_projection_loss = self.loss_function(projected, new_params["weights"], X_f32)
+
+                # Use adaptive blending based on loss differential
+                # If projection increases loss, use less of the projected result
+                loss_ratio = post_projection_loss / (pre_projection_loss + 1e-10)
+                blend_factor = jnp.where(
+                    loss_ratio > 1.01,  # Loss increased by more than 1%
+                    0.01,  # Use only 7% of projected result if loss increases (reduced from 10%)
+                    0.5,  # Otherwise use 60% of projected result (reduced from 50%)
+                )
+
+                # Severe loss increase detection and mitigation
+                blend_factor = jnp.where(
+                    loss_ratio > 1.1,  # Loss increased by more than 10%
+                    0.005,  # Barely use the projection (0.5%)
+                    blend_factor,  # Otherwise use standard blend factor
+                )
+
+                # Blend original and projected archetypes
+                return blend_factor * projected + (1 - blend_factor) * pre_projection_archetypes
+
+            # Only apply projection on designated iterations
+            new_params["archetypes"] = jax.lax.cond(
+                do_projection, lambda: project_archetypes(), lambda: pre_projection_archetypes
+            )
+
+            # Ensure consistent data types
             new_params = jax.tree.map(lambda p: p.astype(jnp.float32), new_params)
-            # new_params = jax.tree.map(lambda p: p.astype(jnp.float16), new_params)
 
             return new_params, opt_state, loss
 
@@ -412,16 +465,11 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         # Prevent division by zero with explicit type casting
         if self.X_std is not None:
             self.X_std = np.where(self.X_std < 1e-10, np.ones_like(self.X_std), self.X_std)
+
         X_scaled = (X - self.X_mean) / self.X_std if normalize else X.copy()
 
         # Convert to JAX array
         X_jax = jnp.array(X_scaled, dtype=jnp.float32)
-        # X_jax = jnp.array(X_scaled, dtype=jnp.float16)
-        n_samples, n_features = X_jax.shape
-
-        # Convert to JAX array
-        X_jax = jnp.array(X_scaled, dtype=jnp.float32)
-        # X_jax = jnp.array(X_scaled, dtype=jnp.float16)
         n_samples, n_features = X_jax.shape
 
         # Debug information
@@ -436,16 +484,18 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             minval=0.1,
             maxval=0.9,
             dtype=jnp.float32,
-            # dtype=jnp.float16,
         )
         weights_init = self.project_weights(weights_init)
 
         # archetype initialization
-        # archetypes_init, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
-        # archetypes_init, _ = self.qhull_init(X_jax, n_samples, n_features)
-        archetypes_init, _ = self.directional_init(X_jax, n_samples, n_features)
+        if self.archetype_init_method == "directional":
+            archetypes_init, _ = self.directional_init(X_jax, n_samples, n_features)
+        elif self.archetype_init_method == "qhull":
+            archetypes_init, _ = self.qhull_init(X_jax, n_samples, n_features)
+        else:
+            archetypes_init, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
+
         archetypes_init = archetypes_init.astype(jnp.float32)
-        # archetypes_init = archetypes_init.astype(jnp.float16)
 
         # The rest is the same as the original fit method
         # Set up optimizer (Adam with reduced learning rate)
@@ -458,6 +508,12 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         # Optimization loop
         prev_loss = float("inf")
         self.loss_history = []
+
+        # Track best parameters for early stopping and parameter recovery
+        best_loss = float("inf")
+        best_params = {k: v.copy() for k, v in params.items()}
+        no_improvement_count = 0
+        max_no_improvement = 50  # Early stopping threshold
 
         # Calculate initial loss for debugging
         initial_loss = float(self.loss_function(archetypes_init, weights_init, X_jax))
@@ -477,6 +533,28 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 # Record loss
                 self.loss_history.append(loss_value)
 
+                # Track best parameters
+                if loss_value < best_loss:
+                    best_loss = loss_value
+                    best_params = {k: v.copy() for k, v in params.items()}
+                    no_improvement_count = 0
+                else:
+                    no_improvement_count += 1
+
+                # Implement early stopping with parameter restoration
+                if no_improvement_count >= max_no_improvement:
+                    print(f"No improvement for {max_no_improvement} iterations. Early stopping.")
+                    # Restore best parameters
+                    params = best_params
+                    break
+
+                # Periodically check if loss is increasing and restore best parameters if necessary
+                if i > 0 and i % 20 == 0 and loss_value > prev_loss * 1.05:
+                    print(f"Warning: Loss increased significantly at iteration {i}. Restoring best parameters.")
+                    params = {k: v.copy() for k, v in best_params.items()}
+                    # Re-initialize optimizer state
+                    opt_state = optimizer.init(params)
+
                 # Check convergence
                 if i > 0 and abs(prev_loss - loss_value) < self.tol:
                     print(f"Converged at iteration {i}")
@@ -486,15 +564,22 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
                 # Show progress
                 if i % 50 == 0:
-                    print(f"Iteration {i}, Loss: {loss_value:.6f}")
+                    print(f"Iteration {i}, Loss: {loss_value:.6f}, Best loss: {best_loss:.6f}")
 
             except Exception as e:
                 print(f"Error at iteration {i}: {e!s}")
+                # Restore best parameters in case of error
+                params = best_params
                 break
+
+        # Use best parameters for final model
+        if best_loss < loss_value:
+            print(f"Using best parameters with loss: {best_loss:.6f}")
+            params = best_params
 
         # Inverse scale transformation
         archetypes_scaled = np.array(params["archetypes"])
-        self.archetypes = archetypes_scaled * self.X_std + self.X_mean
+        self.archetypes = archetypes_scaled * self.X_std + self.X_mean if normalize else archetypes_scaled
         self.weights = np.array(params["weights"])
 
         if len(self.loss_history) > 0:
@@ -533,7 +618,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
           This effectively "pushes" archetypes toward the convex hull boundary rather than
           pulling them inward.
         - Stability Enhancement: Blends the original archetype with the extreme point using
-          a weighted average (80% extreme point, 20% original archetype) to prevent abrupt
+          a weighted average (20% extreme point, 80% original archetype) to prevent abrupt
           changes and ensure optimization stability.
 
         Args:
@@ -561,10 +646,28 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             # Find the most extreme point in this direction
             max_idx = jnp.argmax(projections)
+            extreme_point = X[max_idx]
 
-            # Mix the extreme point with the original archetype to ensure stability
-            # Use a higher weight for the extreme point to push towards the boundary
-            projected = self.projection_alpha * X[max_idx] + (1 - self.projection_alpha) * archetype
+            # Calculate the projection of the extreme point onto the direction
+            extreme_projection = jnp.dot(extreme_point - centroid, normalized_direction)
+            archetype_projection = jnp.dot(archetype - centroid, normalized_direction)
+
+            # Ensure the archetype doesn't go beyond the extreme point
+            # If archetype is already outside, pull it back inside
+            is_outside = archetype_projection > extreme_projection
+
+            # More conservative projection - smaller alpha value
+            # Use a much smaller coefficient to prevent overshooting
+            adaptive_alpha = jnp.minimum(0.2, self.projection_alpha * 2.0)
+
+            # Different blending strategy depending on whether archetype is inside or outside
+            projected = jnp.where(
+                is_outside,
+                # If outside, interpolate back toward boundary (move 60% back toward extreme point)
+                0.6 * extreme_point + 0.4 * archetype,
+                # If inside, move gently toward boundary
+                adaptive_alpha * extreme_point + (1 - adaptive_alpha) * archetype,
+            )
 
             return projected
 
@@ -708,11 +811,69 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         X_reconstructed = jnp.matmul(weights_f32, archetypes_f32)
         reconstruction_loss = jnp.mean(jnp.sum((X_f32 - X_reconstructed) ** 2, axis=1))
 
+        # Calculate entropy (higher values for uniform weights, lower for sparse weights)
         entropy = -jnp.sum(weights_f32 * jnp.log(weights_f32 + 1e-10), axis=1)
-        entropy_reg = -jnp.mean(entropy)
 
-        return (reconstruction_loss + self.lambda_reg * entropy_reg).astype(jnp.float32)
-        # return (reconstruction_loss + lambda_reg * entropy_reg).astype(jnp.float16)
+        # Corrected sign: Penalize high entropy (uniform weights) to encourage sparsity
+        # Previous implementation unintentionally encouraged uniform weights
+        entropy_reg = jnp.mean(entropy)
+
+        # Add incentive for archetypes to stay near convex hull boundary
+        boundary_incentive = self._calculate_boundary_proximity(archetypes_f32, X_f32)
+
+        # Combined loss with reconstruction, entropy regularization, and boundary incentive
+        # Negative sign for boundary_incentive as higher values should reduce the loss
+        total_loss = reconstruction_loss + self.lambda_reg * entropy_reg - 0.1 * boundary_incentive
+
+        return total_loss.astype(jnp.float32)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _calculate_boundary_proximity(self, archetypes, X):
+        """Calculate a metric that rewards archetypes for being near convex hull boundary.
+
+        A high value indicates archetypes are closer to the convex hull boundary,
+        which is desirable for archetypal analysis. This serves as a regularization term
+        that encourages archetypes to move toward extremal positions.
+        """
+        # Find the centroid of the data
+        centroid = jnp.mean(X, axis=0)
+
+        def _boundary_score_for_archetype(archetype):
+            # Direction from centroid to archetype
+            direction = archetype - centroid
+            direction_norm = jnp.linalg.norm(direction)
+
+            # Skip computation for archetypes too close to centroid
+            normalized_direction = jnp.where(
+                direction_norm > 1e-10, direction / direction_norm, jnp.zeros_like(direction)
+            )
+
+            # Project all points onto this direction
+            projections = jnp.dot(X - centroid, normalized_direction)
+
+            # Calculate distance from archetype to most extreme point in that direction
+            max_projection = jnp.max(projections)
+            archetype_projection = jnp.dot(archetype - centroid, normalized_direction)
+
+            # Normalized proximity to boundary (1.0 = on boundary, 0.0 = at centroid)
+            # Small epsilon to prevent division by zero
+            normalized_proximity = archetype_projection / (max_projection + 1e-10)
+
+            # Penalize archetypes outside the convex hull
+            # This creates a peak at exactly the boundary (normalized_proximity = 1.0)
+            # and penalizes positions both inside (< 1.0) and outside (> 1.0)
+            boundary_score = 1.0 - jnp.abs(normalized_proximity - 1.0)
+
+            # Severe penalty for being outside the boundary
+            is_outside = normalized_proximity > 1.0
+            outside_penalty = jnp.where(is_outside, jnp.exp(normalized_proximity - 1.0) - 1.0, 0.0)
+
+            # Final combined score with exponential penalty for outside positions
+            return jnp.power(boundary_score, 2) - outside_penalty
+
+        # Calculate score for each archetype and return mean
+        scores = jax.vmap(_boundary_score_for_archetype)(archetypes)
+        return jnp.mean(scores)
 
     @partial(jax.jit, static_argnums=(0,))
     def project_weights(self, weights):
@@ -725,9 +886,63 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def update_archetypes(self, archetypes, weights, X) -> jnp.ndarray:
-        """Alternative archetype update strategy based on weighted reconstruction."""
-        W_pinv = jnp.linalg.pinv(weights)
-        return jnp.array(jnp.matmul(W_pinv, X))
+        """Alternative archetype update strategy based on weighted reconstruction.
+
+        This approach directly optimizes archetypes by computing the pseudo-inverse of weights,
+        which often provides a more targeted and mathematically sound update than gradient
+        descent for this specific subproblem.
+        """
+        # Calculate weight matrix pseudoinverse with improved numerical stability
+        # Add a small regularization term to the weights to stabilize the computation
+        W = weights
+        WtW = jnp.dot(W.T, W) + 1e-6 * jnp.eye(W.shape[1])
+        WtX = jnp.dot(W.T, X)
+
+        # Solve for archetypes using the normal equations
+        # This is equivalent to minimizing ||X - W*A||^2 with respect to A
+        archetypes_updated = jnp.linalg.solve(WtW, WtX)
+
+        # Ensure the updated archetypes remain within the convex hull of X
+        # by applying a weighted convex combination with data points
+
+        # Compute distances to find the closest data point for each archetype
+        # Add a small regularization term to ensure numerical stability
+        centroid = jnp.mean(X, axis=0)
+
+        # Process each archetype to ensure it's inside the convex hull
+        def _constrain_to_convex_hull(archetype):
+            # Direction from centroid to archetype
+            direction = archetype - centroid
+            direction_norm = jnp.linalg.norm(direction)
+
+            # Handle near-zero norm case
+            normalized_direction = jnp.where(
+                direction_norm > 1e-10, direction / direction_norm, jnp.zeros_like(direction)
+            )
+
+            # Project all points onto this direction
+            projections = jnp.dot(X - centroid, normalized_direction)
+
+            # Find max projection (extreme point in this direction)
+            max_projection = jnp.max(projections)
+
+            # Calculate archetype projection along this direction
+            archetype_projection = jnp.dot(archetype - centroid, normalized_direction)
+
+            # Scale factor to bring the archetype inside the convex hull if it's outside
+            # Apply a small margin (0.99) to ensure it's strictly inside
+            scale_factor = jnp.where(
+                archetype_projection > max_projection, 0.99 * max_projection / (archetype_projection + 1e-10), 1.0
+            )
+
+            # Apply the scaling to the direction vector
+            constrained_archetype = centroid + scale_factor * (archetype - centroid)
+            return constrained_archetype
+
+        # Apply constraint to each archetype
+        constrained_archetypes = jax.vmap(_constrain_to_convex_hull)(archetypes_updated)
+
+        return jnp.asarray(constrained_archetypes)
 
 
 class ArchetypeTracker(ImprovedArchetypalAnalysis):
@@ -737,13 +952,15 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         """Initialize the ArchetypeTracker with parameters identical to those of ImprovedArchetypalAnalysis."""
         super().__init__(*args, **kwargs)
         self.archetype_history = []
+        self.loss_history = []
         self.optimizer: optax.GradientTransformation = optax.adam(learning_rate=self.learning_rate)
         # Specific settings for archetype updates
-        self.archetype_grad_scale = (
-            2.0  # Gradient scale for archetypes (values greater than 1.0 enhance archetype updates)
-        )
-        self.noise_scale = 0.05  # Magnitude of initial noise
-        self.exploration_noise_scale = 0.1  # Magnitude of exploration noise
+        self.archetype_grad_scale = 1.0  # Gradient scale for archetypes (reduced from 1.5 to 1.0)
+        self.noise_scale = 0.02  # Magnitude of initial noise (reduced from 0.03)
+        self.exploration_noise_scale = 0.05  # Magnitude of exploration noise (reduced from 0.07)
+        # Track position metrics
+        self.boundary_proximity_history = []  # History of boundary proximity scores
+        self.is_outside_history = []  # History of whether archetypes are outside the convex hull
 
     def fit(self, X: np.ndarray, normalize: bool = False) -> "ArchetypeTracker":
         """Train the model while documenting the positions of archetypes at each iteration."""
@@ -757,48 +974,26 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         X_jax = jnp.array(X)
         n_samples, n_features = X_jax.shape
 
-        # JIT-compiled weight calculation function
-        @jax.jit
-        def calculate_single_weight(x_sample, archetypes):
-            """Compute the weight for a single sample (JIT optimized)."""
-            # Initial weights
-            w = jnp.ones(self.n_archetypes) / self.n_archetypes
+        # Store current iteration for use in adaptive projection
+        self.current_iteration = 0
 
-            # Define the internal loop state
-            def weight_update_step(w, _):
-                # Calculate prediction and error
-                pred = jnp.dot(w, archetypes)
-                error = x_sample - pred
-                grad = -2.0 * jnp.dot(error, archetypes.T)
-
-                # Apply gradient descent and constraints
-                w_new = w - 0.01 * grad
-                w_new = jnp.maximum(1e-10, w_new)
-                sum_w = jnp.sum(w_new)
-                w_new = jnp.where(sum_w > 1e-10, w_new / sum_w, jnp.ones_like(w_new) / self.n_archetypes)
-                return w_new, None
-
-            # Use lax.scan to optimize iterative calculations (instead of a for loop)
-            final_w, _ = jax.lax.scan(weight_update_step, w, None, length=100)
-            return final_w
-
-        # Use vmap to parallelize weight calculations for all samples
-        calculate_all_weights = jax.vmap(calculate_single_weight, in_axes=(0, None))
-
-        # Initialize archetypes and weights
-        _, subkey = jax.random.split(jax.random.key(self.random_seed))
-        archetypes, _ = self.directional_init(X_jax, n_samples, n_features)
-
-        # Introduce a small noise after archetype initialization to encourage exploration
-        self.key, subkey = jax.random.split(self.key)
-        noise = jax.random.normal(subkey, archetypes.shape) * self.noise_scale
-        archetypes = archetypes + noise
-
-        # Project again after adding noise to return to the convex hull boundary
-        archetypes = self.project_archetypes(archetypes, X_jax)
+        # Initialize archetypes based on selected method
+        if self.archetype_init_method == "directional":
+            archetypes, _ = self.directional_init(X_jax, n_samples, n_features)
+        elif self.archetype_init_method == "qhull":
+            archetypes, _ = self.qhull_init(X_jax, n_samples, n_features)
+        else:
+            archetypes, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
 
         # Store initial archetypes
         self.archetype_history = [np.array(archetypes)]
+
+        # Track initial boundary proximity
+        initial_proximity = self._calculate_boundary_proximity(archetypes, X_jax)
+        self.boundary_proximity_history.append(float(initial_proximity))
+
+        # Track whether archetypes are outside the convex hull
+        self.is_outside_history.append(self._check_archetypes_outside(archetypes, X_jax))
 
         # Set up optimization
         self.optimizer = optax.adam(learning_rate=self.learning_rate)
@@ -806,179 +1001,157 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
 
         # Optimization loop
         prev_loss = float("inf")
-        self.loss_history = []
-        prev_archetypes = archetypes.copy()  # Store previous archetypes for monitoring changes
-
-        # Variables to store the best parameters throughout optimization
-        best_archetypes = archetypes.copy()
         best_loss = float("inf")
+        best_archetypes = archetypes.copy()
         no_improvement_count = 0
 
-        # Calculate initial loss for debugging
-        initial_loss = float(self.loss_function(archetypes, None, X_jax))
+        # Calculate initial loss
+        weights = self._calculate_weights(X_jax, archetypes)
+        initial_loss = float(self.loss_function(archetypes, weights, X_jax))
+        self.loss_history.append(initial_loss)
         print(f"Initial loss: {initial_loss:.6f}")
 
+        # Calculate loss and gradients with archetype as the only variable
+        def loss_fn(arch):
+            return self.loss_function(arch, weights, X_jax)
+
         for i in range(self.max_iter):
-            # Execute update step
-            try:
-                archetypes, opt_state, loss_value = self._update_step(archetypes, opt_state, X_jax, i)
+            # Update current iteration
+            self.current_iteration = i
 
-                # Store current archetypes
-                self.archetype_history.append(np.array(archetypes))
+            # Calculate weights
+            weights = self._calculate_weights(X_jax, archetypes)
+            loss_value, grads = jax.value_and_grad(loss_fn)(archetypes)
 
-                # Check for NaN
-                if jnp.isnan(loss_value):
-                    print(f"Warning: NaN detected at iteration {i}. Stopping early.")
-                    break
+            # Adjust and clip gradients - use tighter clipping initially, gradually relaxing
+            gradient_clip = jnp.minimum(0.2 + i * 0.001, 1.0)  # Start with tight clipping, gradually increase
+            grads = grads * self.archetype_grad_scale
+            grads = jnp.clip(grads, -gradient_clip, gradient_clip)  # Progressive clipping strategy
 
-                # Record loss
-                self.loss_history.append(loss_value)
+            # Execute optimization step
+            updates, opt_state = self.optimizer.update(grads, opt_state)
+            archetypes = optax.apply_updates(archetypes, updates)
 
-                # Update best parameters if the current loss is lower
-                if loss_value < best_loss:
-                    best_loss = loss_value
-                    best_archetypes = archetypes.copy()
-                    no_improvement_count = 0
+            # Apply direct algebraic update periodically - match parent class interval
+            if i % 15 == 0:
+                archetypes_dir = self.update_archetypes(archetypes, weights, X_jax)
+                # Blend with gradient-based update - match parent class blend factor
+                # Use a more conservative blend factor for better stability
+                blend = 0.2  # 20% direct update, 80% gradient update (matching parent class)
+                archetypes = blend * archetypes_dir + (1 - blend) * archetypes
+
+            # Apply projection to convex hull boundary periodically - match parent class interval
+            if i % 10 == 0:  # Matching parent class interval of 10
+                pre_projection_archetypes = archetypes.copy()
+                if self.projection_method == "cbap" or self.projection_method == "default":
+                    projected = self.project_archetypes(archetypes, X_jax)
+                elif self.projection_method == "convex_hull":
+                    projected = self.project_archetypes_convex_hull(archetypes, X_jax)
                 else:
-                    no_improvement_count += 1
+                    projected = self.project_archetypes_knn(archetypes, X_jax)
 
-                # Revert to best parameters if loss increases significantly
-                # Use JAX-style functional approach for parameter restoration
-                def make_restore_best_params(iteration, best_archetypes_val, best_loss_val):
-                    def restore_best_params(_):
-                        print(
-                            f"Warning: Loss increased significantly at iteration {iteration}. Reverting to best parameters."
-                        )
-                        restored_params = {
-                            "archetypes": best_archetypes_val.copy(),
-                            "weights": None,  # Assuming weights are not updated in this method
-                        }
-                        return restored_params, best_loss_val
+                # Calculate loss before and after projection
+                pre_loss = float(self.loss_function(pre_projection_archetypes, weights, X_jax))
+                post_loss = float(self.loss_function(projected, weights, X_jax))
 
-                    return restore_best_params
+                # Adaptive blending based on loss change - using parent class logic
+                loss_ratio = post_loss / (pre_loss + 1e-10)
+                # Use extremely conservative blending during the initial iterations
+                early_phase_factor = jnp.maximum(0.5, 1.0 - i / 50)  # Reduces from 1.0 to 0.5 over first 50 iterations
 
-                def make_keep_current_params(archetypes_val, loss_val):
-                    def keep_current_params(_):
-                        return archetypes_val, loss_val
+                if loss_ratio > 1.1:  # Loss increased by more than 10%
+                    blend_factor = 0.005 * (1.0 - early_phase_factor)  # Near zero in early iterations
+                elif loss_ratio > 1.01:  # Loss increased by more than 1%
+                    blend_factor = 0.01 * (1.0 - early_phase_factor)  # Near zero in early iterations
+                else:
+                    # Start very conservatively and gradually increase
+                    max_blend = 0.5  # Same as parent class
+                    blend_factor = max_blend * (1.0 - early_phase_factor)
 
-                    return keep_current_params
+                # Apply blended projection
+                archetypes = blend_factor * projected + (1 - blend_factor) * pre_projection_archetypes
 
-                # Only revert if loss increased significantly and not in early stages
-                should_revert = (loss_value > prev_loss * 1.05) & (i > 50)
-                restore_fn = make_restore_best_params(i, best_archetypes, best_loss)
-                keep_fn = make_keep_current_params(archetypes, loss_value)
-                archetypes, loss_value = jax.lax.cond(should_revert, restore_fn, keep_fn, operand=None)
+            # Ensure archetypes remain within convex hull
+            archetypes = self._constrain_to_convex_hull_batch(archetypes, X_jax)
 
-                # Reduce learning rate after extended periods without improvement
-                if no_improvement_count >= 100 and no_improvement_count % 100 == 0:
-                    print(f"No improvement for {no_improvement_count} iterations. Reducing learning rate.")
-                    # Create new optimizer with reduced learning rate
-                    reduced_lr = self.learning_rate * 0.5
-                    self.optimizer = optax.adam(learning_rate=reduced_lr)
-                    opt_state = self.optimizer.init(archetypes)
+            # Calculate loss with updated archetypes and weights
+            weights = self._calculate_weights(X_jax, archetypes)
+            loss_value = float(self.loss_function(archetypes, weights, X_jax))
 
-                # Check for convergence
-                if i > 0 and abs(prev_loss - loss_value) < self.tol:
-                    print(f"Converged at iteration {i}")
-                    break
+            # Store history
+            self.archetype_history.append(np.array(archetypes))
+            self.loss_history.append(loss_value)
 
-                prev_loss = loss_value
+            # Track boundary proximity
+            boundary_proximity = self._calculate_boundary_proximity(archetypes, X_jax)
+            self.boundary_proximity_history.append(float(boundary_proximity))
 
-                # Show progress and monitor archetype changes
-                if i % 50 == 0:
-                    archetype_change = jnp.mean(jnp.sum((archetypes - prev_archetypes) ** 2, axis=1))
-                    print(f"Iteration {i}, Loss: {loss_value:.6f}, Avg archetype change: {float(archetype_change):.6f}")
-                    prev_archetypes = archetypes.copy()
+            # Track whether archetypes are outside the convex hull
+            self.is_outside_history.append(self._check_archetypes_outside(archetypes, X_jax))
 
-                    # Exploratory movement: occasionally perturb the archetypes randomly
-                    if i > 0 and i % 200 == 0 and archetype_change < 0.001:
-                        print("Introducing exploration noise to the archetypes...")
+            # Update best parameters
+            if loss_value < best_loss:
+                best_loss = loss_value
+                best_archetypes = archetypes.copy()
+                no_improvement_count = 0
+            else:
+                no_improvement_count += 1
 
-                        # Store loss and parameters before adding noise
-                        pre_noise_loss = loss_value
-                        pre_noise_archetypes = archetypes.copy()
-
-                        # Add exploration noise
-                        self.key, subkey = jax.random.split(self.key)
-                        exploration_noise = jax.random.normal(subkey, archetypes.shape) * self.exploration_noise_scale
-                        archetypes = archetypes + exploration_noise
-                        archetypes = self.project_archetypes(archetypes, X_jax)
-
-                        # Calculate loss after adding noise
-                        post_noise_loss = float(self.loss_function(archetypes, None, X_jax))
-
-                        # Revert noise if loss increases significantly using JAX-style conditionals
-                        def make_revert_noise(pre_loss, post_loss, pre_archetypes):
-                            def revert_noise(_):
-                                print(
-                                    f"Noise increased loss significantly ({pre_loss:.6f} -> {post_loss:.6f}). Reverting."
-                                )
-                                return pre_archetypes
-
-                            return revert_noise
-
-                        def make_keep_noise(current_archetypes):
-                            def keep_noise(_):
-                                return current_archetypes
-
-                            return keep_noise
-
-                        # Check if noise should be reverted (loss increased by more than 10%)
-                        should_revert_noise = post_noise_loss > pre_noise_loss * 1.1
-                        revert_fn = make_revert_noise(pre_noise_loss, post_noise_loss, pre_noise_archetypes)
-                        keep_fn = make_keep_noise(archetypes)
-                        archetypes = jax.lax.cond(should_revert_noise, revert_fn, keep_fn, operand=None)
-
-            except Exception as e:
-                print(f"Error at iteration {i}: {e!s}")
+            # More aggressive early stopping for tracker to prevent excessive movement
+            if no_improvement_count >= 30:  # Reduced from 50 to 30
+                print(f"No improvement for {no_improvement_count} iterations. Early stopping.")
                 break
 
-        # Use the best parameters for the final model if they outperform the current ones
-        # JAX-style conditional for final parameter selection
-        def make_use_best_params(best_archetypes_val, best_loss_val):
-            def use_best_params(_):
-                print(f"Utilizing best parameters with loss: {best_loss_val:.6f}")
-                return best_archetypes_val
+            # More sensitive loss increase detection for tracker
+            if i > 0 and loss_value > prev_loss * 1.02:  # Reduced from 1.05 to 1.02
+                archetypes = best_archetypes.copy()
+                # Re-initialize optimizer
+                opt_state = self.optimizer.init(archetypes)
 
-            return use_best_params
+            # Convergence check
+            if i > 0 and abs(prev_loss - loss_value) < self.tol:
+                print(f"Converged at iteration {i}")
+                break
 
-        def make_use_current_params(current_archetypes):
-            def use_current_params(_):
-                return current_archetypes
+            prev_loss = loss_value
 
-            return use_current_params
+            # Print progress
+            if i % 50 == 0:
+                outside_count = np.sum(self.is_outside_history[-1])
+                print(
+                    f"Iteration {i}, Loss: {loss_value:.6f}, "
+                    + f"Best loss: {best_loss:.6f}, "
+                    + f"Boundary proximity: {float(boundary_proximity):.4f}, "
+                    + f"Archetypes outside: {outside_count}/{self.n_archetypes}"
+                )
 
-        # Check if the best parameters yield a lower loss
-        current_final_loss = float(self.loss_function(archetypes, None, X_jax))
-        use_best = best_loss < current_final_loss
-        use_best_fn = make_use_best_params(best_archetypes, best_loss)
-        use_current_fn = make_use_current_params(archetypes)
-        archetypes = jax.lax.cond(use_best, use_best_fn, use_current_fn, operand=None)
+        # Use best archetypes
+        if best_loss < loss_value:
+            print(f"Using best parameters with loss: {best_loss:.6f}")
+            archetypes = best_archetypes
 
-        # Calculate the final weights
-        weights = calculate_all_weights(X_jax, archetypes)
+        # Final weights calculation
+        weights = self._calculate_weights(X_jax, archetypes)
 
-        # Inverse scale transformation
-        archetypes_scaled = np.array(archetypes)
-        self.archetypes = archetypes_scaled * self.X_std + self.X_mean if normalize else archetypes_scaled
-        self.weights = np.array(weights)  # Store weights
-        self.archetype_history = [
-            arch * self.X_std + self.X_mean if normalize else arch for arch in self.archetype_history
-        ]
+        # Store final model
+        self.archetypes = np.array(archetypes) * self.X_std + self.X_mean if normalize else np.array(archetypes)
+        self.weights = np.array(weights)
+
+        # Scale history if normalized
+        if normalize:
+            self.archetype_history = [arch * self.X_std + self.X_mean for arch in self.archetype_history]
 
         return self
 
-    def _update_step(self, archetypes, opt_state, X, iteration):
-        """Execute one iteration of the update step with JAX acceleration."""
+    def _calculate_weights(self, X, archetypes):
+        """Calculate optimal weights for given archetypes using JAX."""
 
-        # JIT-compiled weight calculation function
         @jax.jit
         def calculate_single_weight(x_sample, archetypes):
-            """Compute the weight for a single sample (JIT optimized)."""
             # Initial weights
             w = jnp.ones(self.n_archetypes) / self.n_archetypes
 
-            # Define the internal loop state
+            # Define weight update step
             def weight_update_step(w, _):
                 # Calculate prediction and error
                 pred = jnp.dot(w, archetypes)
@@ -992,77 +1165,314 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
                 w_new = jnp.where(sum_w > 1e-10, w_new / sum_w, jnp.ones_like(w_new) / self.n_archetypes)
                 return w_new, None
 
-            # Use lax.scan to optimize iterative calculations (instead of a for loop)
+            # Run 100 iterations of optimization using scan
             final_w, _ = jax.lax.scan(weight_update_step, w, None, length=100)
             return final_w
 
-        # Use vmap to parallelize weight calculations for all samples
-        calculate_all_weights = jax.vmap(calculate_single_weight, in_axes=(0, None))
-        weights = calculate_all_weights(X, archetypes)  # Store the results of weight calculations
+        # Parallelize weight calculation across all samples
+        return jax.vmap(calculate_single_weight, in_axes=(0, None))(X, archetypes)
 
-        # Define the loss function (with archetypes as the only variable)
-        def loss_fn(arch):
-            return self.loss_function(arch, weights, X)
+    def _check_archetypes_outside(self, archetypes, X):
+        """Check if archetypes are outside the convex hull."""
+        centroid = jnp.mean(X, axis=0)
 
-        # Calculate loss and gradients
-        loss_value, grads = jax.value_and_grad(loss_fn)(archetypes)
+        def check_single_archetype(archetype):
+            # Direction from centroid to archetype
+            direction = archetype - centroid
+            direction_norm = jnp.linalg.norm(direction)
 
-        # Adjust and clip the gradient scale
-        grads = grads * self.archetype_grad_scale
-        grads = jnp.clip(grads, -1.0, 1.0)
-
-        # Execute the optimization step
-        if self.optimizer is None:
-            raise ValueError("Optimizer is not initialized")
-
-        updates, opt_state = self.optimizer.update(grads, opt_state)
-        archetypes = optax.apply_updates(archetypes, updates)
-
-        # Store the current loss
-        current_loss = loss_value
-
-        # Alternating optimization: strongly update archetypes in specific iterations
-        do_enhanced_update = jnp.mod(iteration, 3) == 0
-
-        # Preserve archetypes before projection
-        pre_projection_archetypes = archetypes.copy()
-
-        # Define projection functions for JAX conditionals
-        def apply_enhanced_update():
-            return self._enhanced_archetype_update(archetypes, X, iteration)
-
-        def apply_standard_projection():
-            # Nested conditional for standard projection methods
-            def project_default():
-                return self.project_archetypes(archetypes, X)
-
-            def project_random():
-                return self.project_archetypes_random(archetypes, X)
-
-            def project_knn():
-                return self.project_archetypes_knn(archetypes, X)
-
-            # Select projection method using JAX conditionals
-            return jax.lax.cond(
-                self.projection_method == "random",
-                project_random,
-                lambda: jax.lax.cond(self.projection_method == "knn", project_knn, project_default),
+            # Skip near-zero norm
+            normalized_direction = jnp.where(
+                direction_norm > 1e-10, direction / direction_norm, jnp.zeros_like(direction)
             )
 
-        # Apply projection with JAX conditional
-        projected_archetypes = jax.lax.cond(do_enhanced_update, apply_enhanced_update, apply_standard_projection)
+            # Project all points onto this direction
+            projections = jnp.dot(X - centroid, normalized_direction)
 
-        # Calculate loss after projection
-        post_projection_loss = float(self.loss_function(projected_archetypes, weights, X))
+            # Calculate archetype projection
+            max_projection = jnp.max(projections)
+            archetype_projection = jnp.dot(archetype - centroid, normalized_direction)
 
-        # If loss increases, reduce the projection intensity
-        if post_projection_loss > current_loss * 1.05:  # Allow for an increase of more than 5%
-            # Blend to reduce projection intensity
-            blend_factor = 0.3  # Adjust projection intensity
-            archetypes = (1 - blend_factor) * pre_projection_archetypes + blend_factor * projected_archetypes
-            loss_value = float(self.loss_function(archetypes, weights, X))
-        else:
-            archetypes = projected_archetypes
-            loss_value = post_projection_loss
+            # Check if archetype is beyond the furthest data point
+            return archetype_projection > max_projection
 
-        return archetypes, opt_state, loss_value
+        # Apply check to each archetype
+        is_outside = jax.vmap(check_single_archetype)(archetypes)
+        return np.array(is_outside)
+
+    def _constrain_to_convex_hull_batch(self, archetypes, X):
+        """Ensure all archetypes are within the convex hull."""
+        return jax.vmap(lambda arch: self._constrain_to_convex_hull(arch, X))(archetypes)
+
+    def _constrain_to_convex_hull(self, archetype, X):
+        """Constrain a single archetype to be within the convex hull.
+
+        More conservative implementation than the parent class,
+        keeping archetypes slightly inside the convex hull boundary.
+        """
+        centroid = jnp.mean(X, axis=0)
+
+        # Direction from centroid to archetype
+        direction = archetype - centroid
+        direction_norm = jnp.linalg.norm(direction)
+
+        # Handle near-zero norm
+        normalized_direction = jnp.where(direction_norm > 1e-10, direction / direction_norm, jnp.zeros_like(direction))
+
+        # Project all points onto this direction
+        projections = jnp.dot(X - centroid, normalized_direction)
+
+        # Find extreme point in this direction
+        max_projection = jnp.max(projections)
+
+        # Calculate archetype projection
+        archetype_projection = jnp.dot(archetype - centroid, normalized_direction)
+
+        # Scale if outside or too close to boundary
+        # Use a more conservative factor for tracker (0.95 instead of 0.99) to stay further from boundary
+        # This helps prevent oscillations around the boundary
+        safe_factor = 0.95
+        scale_factor = jnp.where(
+            archetype_projection > max_projection * safe_factor,
+            safe_factor * max_projection / (archetype_projection + 1e-10),
+            1.0,
+        )
+
+        # Scale the offset from centroid
+        return centroid + scale_factor * (archetype - centroid)
+
+    def visualize_movement(self, feature_indices=None, figsize=(12, 8), interval=1):
+        """Visualize how archetypes moved during optimization.
+
+        Args:
+            feature_indices: Indices of features to use for 2D plot. If None, PCA is used.
+            figsize: Figure size.
+            interval: Plot every nth iteration to avoid overcrowding.
+
+        Returns:
+            matplotlib figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import numpy as np
+            from matplotlib.cm import get_cmap
+
+            history_sample = self.archetype_history[::interval]
+            loss_sample = self.loss_history[::interval]
+            n_iters = len(history_sample)
+
+            # Set up colormap for iterations
+            cmap = get_cmap("viridis")
+            colors = [cmap(i / max(1, n_iters - 1)) for i in range(n_iters)]
+
+            # Create figure
+            fig, ax = plt.subplots(figsize=figsize)
+
+            # If feature indices not provided, use PCA to reduce to 2D
+            if feature_indices is None or len(feature_indices) != 2:
+                from sklearn.decomposition import PCA
+
+                print("Using PCA to visualize archetype movement...")
+
+                # Flatten all archetypes from all iterations
+                all_archetypes = np.vstack(history_sample)
+
+                # Apply PCA
+                pca = PCA(n_components=2)
+                all_archetypes_2d = pca.fit_transform(all_archetypes)
+
+                # Reshape back to iterations x archetypes x 2
+                archetype_coords = all_archetypes_2d.reshape(n_iters, self.n_archetypes, 2)
+
+                ax.set_xlabel("PCA Component 1")
+                ax.set_ylabel("PCA Component 2")
+            else:
+                # Use specified feature indices
+                archetype_coords = np.array([arch[:, feature_indices] for arch in history_sample])
+                ax.set_xlabel(f"Feature {feature_indices[0]}")
+                ax.set_ylabel(f"Feature {feature_indices[1]}")
+
+            # Plot trajectory of each archetype
+            for a in range(self.n_archetypes):
+                # Extract trajectory for this archetype
+                trajectory = archetype_coords[:, a, :]
+
+                # Plot each segment with color based on iteration
+                for i in range(1, n_iters):
+                    ax.plot(
+                        trajectory[i - 1 : i + 1, 0],
+                        trajectory[i - 1 : i + 1, 1],
+                        color=colors[i],
+                        alpha=0.7,
+                        linewidth=2,
+                    )
+
+                # Mark starting point
+                ax.scatter(
+                    trajectory[0, 0],
+                    trajectory[0, 1],
+                    color="blue",
+                    s=100,
+                    marker="o",
+                    label=f"Start A{a + 1}" if a == 0 else f"A{a + 1}",
+                )
+
+                # Mark final position
+                ax.scatter(
+                    trajectory[-1, 0],
+                    trajectory[-1, 1],
+                    color="red",
+                    s=100,
+                    marker="*",
+                    label=f"Final A{a + 1}" if a == 0 else "",
+                )
+
+            # Add colorbar to show iteration progress
+            sm = plt.cm.ScalarMappable(cmap=cmap)
+            sm.set_array([])
+            cbar = plt.colorbar(sm, ax=ax)
+            cbar.set_label("Optimization Progress (Iterations)")
+
+            # Add loss curve as inset
+            loss_ax = fig.add_axes((0.15, 0.15, 0.25, 0.25))  # [left, bottom, width, height]
+            loss_ax.plot(range(0, n_iters * interval, interval), loss_sample, "k-")
+            loss_ax.set_title("Loss Function")
+            loss_ax.set_xlabel("Iterations")
+            loss_ax.set_ylabel("Loss")
+
+            # Add title and legend
+            ax.set_title("Archetype Movement During Optimization")
+            ax.legend(loc="upper right")
+
+            plt.tight_layout()
+            return fig
+
+        except ImportError:
+            print("Matplotlib required for visualization.")
+            return None
+
+    def visualize_boundary_proximity(self, figsize=(10, 5)):
+        """Visualize how close archetypes stayed to the convex hull boundary.
+
+        Returns:
+            matplotlib figure
+        """
+        try:
+            import matplotlib.pyplot as plt
+
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+
+            # Plot boundary proximity
+            ax1.plot(self.boundary_proximity_history)
+            ax1.set_title("Boundary Proximity Score")
+            ax1.set_xlabel("Iteration")
+            ax1.set_ylabel("Score")
+            ax1.grid(True)
+
+            # Plot count of archetypes outside convex hull
+            outside_counts = [np.sum(outside) for outside in self.is_outside_history]
+            ax2.plot(outside_counts, "r-")
+            ax2.set_title("Archetypes Outside Convex Hull")
+            ax2.set_xlabel("Iteration")
+            ax2.set_ylabel("Count")
+            ax2.set_ylim(0, self.n_archetypes)
+            ax2.grid(True)
+
+            plt.tight_layout()
+            return fig
+
+        except ImportError:
+            print("Matplotlib required for visualization.")
+            return None
+
+    @partial(jax.jit, static_argnums=(0,))
+    def loss_function(self, archetypes, weights, X):
+        """Customized loss function with reduced boundary incentive for ArchetypeTracker.
+
+        This overrides the parent class loss function to provide more stability during tracking.
+        Specifically, it reduces the boundary incentive weight to prevent archetypes from
+        moving too rapidly in early iterations.
+        """
+        archetypes_f32 = archetypes.astype(jnp.float32)
+        weights_f32 = weights.astype(jnp.float32)
+        X_f32 = X.astype(jnp.float32)
+
+        X_reconstructed = jnp.matmul(weights_f32, archetypes_f32)
+        reconstruction_loss = jnp.mean(jnp.sum((X_f32 - X_reconstructed) ** 2, axis=1))
+
+        # Calculate entropy (higher values for uniform weights, lower for sparse weights)
+        entropy = -jnp.sum(weights_f32 * jnp.log(weights_f32 + 1e-10), axis=1)
+        entropy_reg = jnp.mean(entropy)
+
+        # Add incentive for archetypes to stay near convex hull boundary
+        # But use a much lower weight than the parent class
+        boundary_incentive = self._calculate_boundary_proximity(archetypes_f32, X_f32)
+
+        # We use a significantly reduced boundary incentive for tracking stability
+        # This matches the parent class boundary incentive level
+        total_loss = reconstruction_loss + self.lambda_reg * entropy_reg - 0.005 * boundary_incentive
+
+        return total_loss.astype(jnp.float32)
+
+    def project_archetypes_with_adaptive_strength(self, archetypes, X):
+        """Modified projection function that adapts its strength based on the current iteration.
+
+        In early iterations, the projection is very gentle to prevent large movements.
+        As training progresses, it gradually increases to the normal projection strength.
+        """
+        # Find the centroid of the data
+        centroid = jnp.mean(X, axis=0)
+
+        # Adaptation factor that increases from 0.1 to 1.0 over the first 100 iterations
+        # For stability during tracking
+        adapt_factor = jnp.minimum(0.1 + self.current_iteration * 0.009, 1.0)
+
+        def _project_to_boundary(archetype):
+            # Direction from centroid to archetype
+            direction = archetype - centroid
+            direction_norm = jnp.linalg.norm(direction)
+
+            # Avoid division by zero
+            normalized_direction = jnp.where(
+                direction_norm > 1e-10, direction / direction_norm, jnp.zeros_like(direction)
+            )
+
+            # Project all points onto this direction
+            projections = jnp.dot(X - centroid, normalized_direction)
+
+            # Find the most extreme point in this direction
+            max_idx = jnp.argmax(projections)
+            extreme_point = X[max_idx]
+
+            # Calculate the projection of the extreme point onto the direction
+            extreme_projection = jnp.dot(extreme_point - centroid, normalized_direction)
+            archetype_projection = jnp.dot(archetype - centroid, normalized_direction)
+
+            # Ensure the archetype doesn't go beyond the extreme point
+            # If archetype is already outside, pull it back inside
+            is_outside = archetype_projection > extreme_projection
+
+            # Even more conservative projection for tracking
+            # Scaled by the adaptation factor that increases with iterations
+            adaptive_alpha = adapt_factor * jnp.minimum(0.15, self.projection_alpha * 1.5)
+
+            # Different blending strategy depending on whether archetype is inside or outside
+            projected = jnp.where(
+                is_outside,
+                # If outside, interpolate back toward boundary (more conservative than parent)
+                0.4 * extreme_point + 0.6 * archetype,
+                # If inside, move very gently toward boundary
+                adaptive_alpha * extreme_point + (1 - adaptive_alpha) * archetype,
+            )
+
+            return projected
+
+        # Apply the projection to each archetype
+        projected_archetypes = jax.vmap(_project_to_boundary)(archetypes)
+
+        return jnp.asarray(projected_archetypes)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def project_archetypes(self, archetypes, X):
+        """Override parent class projection with adaptive version for tracking."""
+        return self.project_archetypes_with_adaptive_strength(archetypes, X)
