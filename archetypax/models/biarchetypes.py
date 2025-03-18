@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
+from archetypax.logger import get_logger, get_message
+
 from .archetypes import ImprovedArchetypalAnalysis
 
 T = TypeVar("T", bound=np.ndarray)
@@ -40,6 +42,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         learning_rate: float = 0.001,
         projection_method: str = "default",
         lambda_reg: float = 0.01,
+        **kwargs,
     ):
         """
         Initialize the Biarchetypal Analysis model.
@@ -52,8 +55,8 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             random_seed: Random seed for initialization
             learning_rate: Learning rate for optimizer
             projection_method: Method for projecting archetypes
-            alpha: Weight for extreme point
             lambda_reg: Regularization parameter
+            **kwargs: Additional keyword arguments
         """
         # Initialize using parent class with the row archetypes
         # (we'll handle column archetypes separately)
@@ -63,6 +66,19 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             tol=tol,
             random_seed=random_seed,
             learning_rate=learning_rate,
+            **kwargs,
+        )
+
+        # Initialize class-specific logger
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        self.logger.info(
+            get_message(
+                "init",
+                "model_init",
+                model_name=self.__class__.__name__,
+                n_row_archetypes=n_row_archetypes,
+                n_col_archetypes=n_col_archetypes,
+            )
         )
 
         # Store biarchetypal specific parameters
@@ -220,7 +236,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             projected = jnp.maximum(1e-10, projected)
             sum_projected = jnp.sum(projected)
             projected = jnp.where(
-                sum_projected > 1e-10, projected / sum_projected, jnp.ones_like(projected) / projected.shape[0]
+                sum_projected > 1e-10,
+                projected / sum_projected,
+                jnp.ones_like(projected) / projected.shape[0],
             )
 
             return projected
@@ -307,7 +325,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             projected = jnp.maximum(1e-10, projected)
             sum_projected = jnp.sum(projected)
             projected = jnp.where(
-                sum_projected > 1e-10, projected / sum_projected, jnp.ones_like(projected) / projected.shape[0]
+                sum_projected > 1e-10,
+                projected / sum_projected,
+                jnp.ones_like(projected) / projected.shape[0],
             )
 
             return projected
@@ -343,10 +363,10 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         n_samples, n_features = X_jax.shape
 
         # Debug information
-        print(f"Data shape: {X_jax.shape}")
-        print(f"Data range: min={float(jnp.min(X_jax)):.4f}, max={float(jnp.max(X_jax)):.4f}")
-        print(f"Row archetypes: {self.n_row_archetypes}")
-        print(f"Column archetypes: {self.n_col_archetypes}")
+        self.logger.info(f"Data shape: {X_jax.shape}")
+        self.logger.info(f"Data range: min={float(jnp.min(X_jax)):.4f}, max={float(jnp.max(X_jax)):.4f}")
+        self.logger.info(f"Row archetypes: {self.n_row_archetypes}")
+        self.logger.info(f"Column archetypes: {self.n_col_archetypes}")
 
         # Initialize alpha (row coefficients) with more stable initialization
         self.key, subkey = jax.random.split(self.key)
@@ -412,7 +432,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Each row must sum to 1 to represent a valid convex combination
         beta_init = beta_init / jnp.sum(beta_init, axis=1, keepdims=True)
 
-        print("Row archetypes initialized with k-means++ strategy")
+        self.logger.info("Row archetypes initialized with k-means++ strategy")
 
         # Initialize theta (column archetypes) with advanced diversity-maximizing approach
         # This ensures column archetypes capture the most distinctive feature patterns
@@ -470,7 +490,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Each column must sum to 1 to represent a valid convex combination
         theta_init = theta_init / jnp.sum(theta_init, axis=0, keepdims=True)
 
-        print("Column archetypes initialized with diversity-maximizing strategy")
+        self.logger.info("Column archetypes initialized with diversity-maximizing strategy")
 
         # Set up optimizer with learning rate schedule for better convergence
         # We use a sophisticated learning rate schedule with warmup and decay phases
@@ -557,7 +577,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Calculate initial loss for debugging
         initial_loss = float(self.loss_function(params, X_jax))
-        print(f"Initial loss: {initial_loss:.6f}")
+        self.logger.info(f"Initial loss: {initial_loss:.6f}")
 
         for i in range(self.max_iter):
             try:
@@ -567,7 +587,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
                 # Check for NaN
                 if jnp.isnan(loss_value):
-                    print(f"Warning: NaN detected at iteration {i}. Stopping early.")
+                    self.logger.warning(get_message("warning", "nan_detected", iteration=i))
                     break
 
                 # Record loss
@@ -588,14 +608,16 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
                         # Converge if both short-term and long-term improvements are small
                         if 0 <= rel_improvement < self.tol and 0 <= avg_improvement < self.tol * 2:
-                            print(f"Converged at iteration {i}")
-                            print(f"  - Relative improvement: {rel_improvement:.8f}")
-                            print(f"  - Average improvement: {avg_improvement:.8f}")
+                            self.logger.info(f"Converged at iteration {i}")
+                            self.logger.info(f"  - Relative improvement: {rel_improvement:.8f}")
+                            self.logger.info(f"  - Average improvement: {avg_improvement:.8f}")
                             break
                     else:
                         # Fall back to simple criterion for early iterations
                         if 0 <= rel_improvement < self.tol:
-                            print(f"Early convergence at iteration {i} with relative improvement {rel_improvement:.8f}")
+                            self.logger.info(
+                                f"Early convergence at iteration {i} with relative improvement {rel_improvement:.8f}"
+                            )
                             break
 
                 prev_loss = loss_value
@@ -608,30 +630,34 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                             5, len(self.loss_history)
                         )
                         improvement_rate = (self.loss_history[0] - loss_value) / (i + 1) if i > 0 else 0
-                        print(
+                        self.logger.info(
                             f"Iteration {i:4d} | Loss: {loss_value:.6f} | Avg(5): {avg_last_5:.6f} | Improvement rate: {improvement_rate:.8f}"
                         )
                     else:
-                        print(f"Iteration {i:4d} | Loss: {loss_value:.6f}")
+                        self.logger.info(f"Iteration {i:4d} | Loss: {loss_value:.6f}")
 
                     # Provide in-depth diagnostics at major milestones
                     if i % 100 == 0 and i > 0:
                         # Analyze archetype characteristics
                         alpha_sparsity = jnp.mean(jnp.sum(params["alpha"] > 0.01, axis=1) / params["alpha"].shape[1])
                         gamma_sparsity = jnp.mean(jnp.sum(params["gamma"] > 0.01, axis=0) / params["gamma"].shape[0])
-                        print(
+                        self.logger.info(
                             f"  - Alpha sparsity: {float(alpha_sparsity):.4f} | Gamma sparsity: {float(gamma_sparsity):.4f}"
                         )
-                        print(f"  - Learning rate: {float(schedule(i)):.8f}")
+                        self.logger.info(f"  - Learning rate: {float(schedule(i)):.8f}")
 
                         # Flag potential convergence issues
                         if jnp.max(params["alpha"]) > 0.99:
-                            print("  - Warning: Alpha contains near-one values, may indicate degenerate solution")
+                            self.logger.warning(
+                                "  - Warning: Alpha contains near-one values, may indicate degenerate solution"
+                            )
                         if jnp.max(params["gamma"]) > 0.99:
-                            print("  - Warning: Gamma contains near-one values, may indicate degenerate solution")
+                            self.logger.warning(
+                                "  - Warning: Gamma contains near-one values, may indicate degenerate solution"
+                            )
 
             except Exception as e:
-                print(f"Error at iteration {i}: {e!s}")
+                self.logger.error(f"Error at iteration {i}: {e!s}")
                 break
 
         # Final projection of archetypes to ensure they're on the convex hull boundary
@@ -652,9 +678,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         self.weights = np.array(self.alpha)  # Row weights
 
         if len(self.loss_history) > 0:
-            print(f"Final loss: {self.loss_history[-1]:.6f}")
+            self.logger.info(f"Final loss: {self.loss_history[-1]:.6f}")
         else:
-            print("Warning: No valid loss was recorded")
+            self.logger.warning("No valid loss was recorded")
 
         return self
 

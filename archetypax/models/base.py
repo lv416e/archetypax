@@ -8,6 +8,8 @@ import numpy as np
 import optax
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from archetypax.logger import get_logger, get_message
+
 
 class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
     """GPU-accelerated Archetypal Analysis implementation using JAX."""
@@ -19,6 +21,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         tol: float = 1e-6,
         random_seed: int = 42,
         learning_rate: float = 0.001,
+        **kwargs,
     ):
         """
         Initialize the Archetypal Analysis model.
@@ -29,6 +32,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
             tol: Convergence tolerance
             random_seed: Random seed for initialization
             learning_rate: Learning rate for optimizer (reduced for better stability)
+            **kwargs: Additional keyword arguments for the fit method.
         """
         self.n_archetypes = n_archetypes
         self.max_iter = max_iter
@@ -36,6 +40,17 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         self.random_seed = random_seed
         self.key = jax.random.key(random_seed)
         self.learning_rate = learning_rate
+
+        # Initialize logger
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        self.logger.info(
+            get_message(
+                "init",
+                "model_init",
+                model_name=self.__class__.__name__,
+                n_archetypes=n_archetypes,
+            )
+        )
 
         # Will be set during fitting
         self.archetypes: np.ndarray | None = None
@@ -112,6 +127,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         # Preprocess data: scale for improved stability
         self.X_mean = np.mean(X, axis=0)
         self.X_std = np.std(X, axis=0)
+
         # Prevent division by zero with explicit type casting
         if self.X_std is not None:
             self.X_std = np.where(self.X_std < 1e-10, np.ones_like(self.X_std), self.X_std)
@@ -122,8 +138,8 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         n_samples, _ = X_jax.shape
 
         # Debug information
-        print(f"Data shape: {X_jax.shape}")
-        print(f"Data range: min={jnp.min(X_jax):.4f}, max={jnp.max(X_jax):.4f}")
+        self.logger.info(f"Data shape: {X_jax.shape}")
+        self.logger.info(f"Data range: min={jnp.min(X_jax):.4f}, max={jnp.max(X_jax):.4f}")
 
         # Initialize weights (more stable initialization)
         self.key, subkey = jax.random.split(self.key)
@@ -200,7 +216,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
         # Calculate initial loss for debugging
         initial_loss = float(self.loss_function(archetypes_init, weights_init, X_jax))
-        print(f"Initial loss: {initial_loss:.6f}")
+        self.logger.info(f"Initial loss: {initial_loss:.6f}")
 
         for i in range(self.max_iter):
             # Execute update step
@@ -210,7 +226,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
                 # Check for NaN
                 if jnp.isnan(loss_value):
-                    print(f"Warning: NaN detected at iteration {i}. Stopping early.")
+                    self.logger.warning(get_message("warning", "nan_detected", iteration=i))
                     # Use last valid parameters
                     break
 
@@ -219,17 +235,17 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
                 # Check convergence
                 if i > 0 and abs(prev_loss - loss_value) < self.tol:
-                    print(f"Converged at iteration {i}")
+                    self.logger.info(f"Converged at iteration {i}")
                     break
 
                 prev_loss = loss_value
 
                 # Show progress
                 if i % 50 == 0:
-                    print(f"Iteration {i}, Loss: {loss_value:.6f}")
+                    self.logger.info(f"Iteration {i}, Loss: {loss_value:.6f}")
 
             except Exception as e:
-                print(f"Error at iteration {i}: {e!s}")
+                self.logger.error(f"Error at iteration {i}: {e!s}")
                 break
 
         # Inverse scale transformation
@@ -238,9 +254,9 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         self.weights = np.array(params["weights"])
 
         if len(self.loss_history) > 0:
-            print(f"Final loss: {self.loss_history[-1]:.6f}")
+            self.logger.info(f"Final loss: {self.loss_history[-1]:.6f}")
         else:
-            print("Warning: No valid loss was recorded")
+            self.logger.warning("No valid loss was recorded")
 
         return self
 
