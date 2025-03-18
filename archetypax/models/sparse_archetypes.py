@@ -69,11 +69,10 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             **kwargs,
         )
 
+        self.rng_key = jax.random.key(random_seed)
         self.lambda_sparsity = lambda_sparsity
         self.sparsity_method = sparsity_method
-        self.min_volume_factor = (
-            min_volume_factor  # Parameter controlling the minimum volume of the convex hull.
-        )
+        self.min_volume_factor = min_volume_factor  # Parameter controlling the minimum volume of the convex hull.
 
         # Initialize a class-specific logger with the updated class name.
         self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
@@ -114,9 +113,7 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             # Approximation of the L0 norm using a continuous function.
             # This provides a smoother approximation for counting non-zero elements.
             epsilon = 1e-6
-            sparsity_penalty = jnp.mean(
-                jnp.sum(1 - jnp.exp(-(archetypes_f32**2) / epsilon), axis=1)
-            )
+            sparsity_penalty = jnp.mean(jnp.sum(1 - jnp.exp(-(archetypes_f32**2) / epsilon), axis=1))
         elif self.sparsity_method == "feature_selection":
             # Encourages each archetype to concentrate on a subset of features
             # by penalizing uniform distribution across features.
@@ -141,7 +138,7 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             masked_similarities = similarity_matrix * mask
 
             # Retrieve the maximum similarity (higher values indicate a problem).
-            archetype_diversity_penalty = float(jnp.mean(jnp.maximum(masked_similarities, 0)))
+            archetype_diversity_penalty = jax.device_get(jnp.mean(jnp.maximum(masked_similarities, 0)))
 
         # Add the archetype diversity penalty to the total loss (higher similarity = lower diversity penalty).
         diversity_weight = 0.1
@@ -217,9 +214,7 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             # Soft thresholding: shrink values below the threshold.
             shrinkage_factor = 0.7  # Controls the aggressiveness of shrinking small values.
             mask = archetypes_updated < thresholds
-            archetypes_updated = jnp.where(
-                mask, archetypes_updated * shrinkage_factor, archetypes_updated
-            )
+            archetypes_updated = jnp.where(mask, archetypes_updated * shrinkage_factor, archetypes_updated)
 
             # Re-normalize to maintain simplex constraints.
             row_sums = jnp.sum(archetypes_updated, axis=1, keepdims=True)
@@ -234,8 +229,8 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         noise_scale = 0.01
 
         # Use jax.random instead of jnp.random
-        key = jax.random.key(0)  # Fixed seed for deterministic noise
-        noise = jax.random.uniform(key, shape=archetypes_updated.shape) - 0.5  # Zero-centered noise
+        _, noise_key = jax.random.split(self.rng_key)  # Fixed seed for deterministic noise
+        noise = jax.random.uniform(noise_key, shape=archetypes_updated.shape) - 0.5  # Zero-centered noise
 
         # Scale noise inversely proportional to variance (more noise where variance is low).
         # Add a small epsilon to avoid division by zero.
@@ -343,9 +338,7 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
                     # Utilize a blend of the current position and the extreme point.
                     blend_factor = 0.5  # Move halfway toward the extreme point.
                     if current_projection < max_projection:
-                        target_projection = current_projection + blend_factor * (
-                            max_projection - current_projection
-                        )
+                        target_projection = current_projection + blend_factor * (max_projection - current_projection)
                         archetypes_np[i] = centroid + normalized_direction * target_projection
 
             # Re-normalize to maintain simplex constraints.
@@ -419,3 +412,24 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             model.archetypes = self.diversify_archetypes(model.archetypes, X_jax)
 
         return model
+
+    def fit_transform(
+        self,
+        X: np.ndarray,
+        y: np.ndarray | None = None,
+        normalize: bool = False,
+        **kwargs,
+    ) -> np.ndarray:
+        """Fit the Sparse Archetypal Analysis model to the data and return the transformed data.
+
+        Args:
+            X: Input data matrix of shape (n_samples, n_features).
+            y: Target values (not used).
+            normalize: Whether to normalize data prior to fitting.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            Transformed data matrix of shape (n_samples, n_archetypes).
+        """
+        model = self.fit(X, normalize, **kwargs)
+        return model.transform(X)
