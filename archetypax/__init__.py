@@ -9,11 +9,12 @@ from typing import Any
 
 from . import logger, models, tools
 from .logger import get_logger, get_message
-from .models.archetypes import ImprovedArchetypalAnalysis
 
 # Direct imports for simplified usage
+from .models.archetypes import ImprovedArchetypalAnalysis
 from .models.base import ArchetypalAnalysis
 from .models.biarchetypes import BiarchetypalAnalysis
+from .models.sparse_archetypes import SparseArchetypalAnalysis
 from .tools.evaluation import ArchetypalAnalysisEvaluator
 from .tools.interpret import ArchetypalAnalysisInterpreter
 from .tools.visualization import ArchetypalAnalysisVisualizer

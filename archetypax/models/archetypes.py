@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from scipy.spatial import ConvexHull
 
 from archetypax.logger import get_logger, get_message
 
@@ -27,9 +28,10 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         projection_method: str = "cbap",
         projection_alpha: float = 0.1,
         archetype_init_method: str = "directional",
+        min_volume_factor: float = 0.001,
         **kwargs,
     ):
-        """Initialize the Improved Archetypal Analysis model.
+        """Initialize the ImprovedArchetypalAnalysis model.
 
         Args:
             n_archetypes: Number of archetypes to extract
@@ -37,12 +39,13 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             tol: Convergence tolerance
             random_seed: Random seed for reproducibility
             learning_rate: Learning rate for the optimizer
-            lambda_reg: Regularization strength
+            lambda_reg: Regularization strength for weights
             normalize: Whether to normalize data before fitting
             projection_method: Method for projecting archetypes ("cbap", "convex_hull", or "knn")
             projection_alpha: Strength of projection (0-1)
             archetype_init_method: Method for initializing archetypes
                 ("directional", "qhull", "kmeans_pp")
+            min_volume_factor: Minimum volume factor to prevent simplex degeneracy (0-1)
             **kwargs: Additional keyword arguments
 
         Note:
@@ -66,6 +69,11 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 "model_init",
                 model_name=self.__class__.__name__,
                 n_archetypes=n_archetypes,
+                learning_rate=learning_rate,
+                lambda_reg=lambda_reg,
+                projection_method=projection_method,
+                projection_alpha=projection_alpha,
+                min_volume_factor=min_volume_factor,
             )
         )
 
@@ -86,6 +94,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         )
         self.projection_alpha = projection_alpha
         self.archetype_init_method = archetype_init_method
+        self.min_volume_factor = min_volume_factor
         self.early_stopping_patience = min(kwargs.get("early_stopping_patience", 100), 100)
         # Initialize tracking
         self.archetype_history: list[np.ndarray] = []
@@ -653,6 +662,8 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         Returns:
             self: The fitted model.
         """
+        # Initialize loss_value at the beginning to avoid UnboundLocalError
+        loss_value = float("inf")
 
         @partial(jax.jit, static_argnums=(3))
         def update_step(params, opt_state, X, iteration):
@@ -952,6 +963,16 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         else:
             self.logger.warning("No valid loss was recorded")
 
+        # After optimization loop, apply diversification to ensure non-degeneracy
+        if hasattr(self, "archetypes") and self.archetypes is not None:
+            X_processed = X if not normalize else (X - self.X_mean) / self.X_std
+            X_jax = jnp.array(X_processed)
+            self.archetypes = self.diversify_archetypes(self.archetypes, X_jax)
+
+            # Recalculate weights with updated archetypes to ensure consistency
+            if hasattr(self, "weights"):
+                self.weights = self.transform(X)
+
         return self
 
     def fit_transform(
@@ -1193,7 +1214,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def loss_function(self, archetypes, weights, X):
-        """JIT-compiled loss function with mixed precision."""
+        """JIT-compiled loss function with mixed precision and diversity incentives."""
         archetypes_f32 = archetypes.astype(jnp.float32)
         weights_f32 = weights.astype(jnp.float32)
         X_f32 = X.astype(jnp.float32)
@@ -1211,10 +1232,33 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         # Add incentive for archetypes to stay near convex hull boundary
         boundary_incentive = self._calculate_boundary_proximity(archetypes_f32, X_f32)
 
-        # Combined loss with reconstruction, entropy regularization, and boundary incentive
+        # Calculate archetype diversity penalty based on pairwise similarity
+        n_archetypes = archetypes_f32.shape[0]
+        archetype_diversity_penalty = 0.0
+
+        if n_archetypes > 1:
+            # Compute normalized cosine similarity matrix between archetypes
+            norms = jnp.sqrt(jnp.sum(archetypes_f32**2, axis=1, keepdims=True))
+            normalized_archetypes = archetypes_f32 / jnp.maximum(norms, 1e-10)
+            similarity_matrix = jnp.dot(normalized_archetypes, normalized_archetypes.T)
+
+            # Exclude diagonal elements (self-similarity is always 1)
+            mask = jnp.ones((n_archetypes, n_archetypes)) - jnp.eye(n_archetypes)
+            masked_similarities = similarity_matrix * mask
+
+            # Retrieve maximum similarity (higher values indicate a problem)
+            archetype_diversity_penalty = float(jnp.mean(jnp.maximum(masked_similarities, 0)))
+
+        # Add archetype diversity penalty to total loss (higher similarity = lower diversity penalty)
+        diversity_weight = 0.1
+
+        # Combined loss with reconstruction, entropy regularization, boundary incentive, and diversity
         # Negative sign for boundary_incentive as higher values should reduce the loss
         total_loss = (
-            reconstruction_loss + self.lambda_reg * entropy_reg - 0.001 * boundary_incentive
+            reconstruction_loss
+            + self.lambda_reg * entropy_reg
+            - 0.001 * boundary_incentive
+            + diversity_weight * archetype_diversity_penalty
         )
 
         return total_loss.astype(jnp.float32)
@@ -1278,11 +1322,12 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def update_archetypes(self, archetypes, weights, X) -> jnp.ndarray:
-        """Alternative archetype update strategy based on weighted reconstruction.
+        """Alternative archetype update strategy based on weighted reconstruction with degeneracy prevention.
 
         This approach directly optimizes archetypes by computing the pseudo-inverse of weights,
         which often provides a more targeted and mathematically sound update than gradient
-        descent for this specific subproblem.
+        descent for this specific subproblem. Additional mechanisms are included to prevent
+        degenerate simplex configurations.
         """
         # Calculate weight matrix pseudoinverse with improved numerical stability
         # Add a small regularization term to the weights to stabilize the computation
@@ -1294,7 +1339,27 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         # This is equivalent to minimizing ||X - W*A||^2 with respect to A
         archetypes_updated = jnp.linalg.solve(WtW, WtX)
 
-        # Ensure the updated archetypes remain within the convex hull of X
+        # Calculate feature-wise variance of archetypes to identify potential degeneracy
+        # If variance is too low in some features across archetypes, it suggests potential degeneracy
+        archetype_variance = jnp.var(archetypes_updated, axis=0, keepdims=True)
+
+        # Add small noise in the direction of low variance to prevent degeneracy
+        # Scale noise with the inverse of the variance to target low-variance dimensions
+        noise_scale = 0.01
+
+        # Use jax.random instead of jnp.random
+        key = jax.random.key(0)  # Fixed seed for deterministic noise
+        noise = jax.random.uniform(key, shape=archetypes_updated.shape) - 0.5  # Zero-centered noise
+
+        # Scale noise inversely proportional to variance (more noise where variance is low)
+        # Add small epsilon to avoid division by zero
+        variance_scaling = noise_scale / (jnp.sqrt(archetype_variance) + 1e-8)
+        scaled_noise = noise * variance_scaling
+
+        # Apply noise selectively
+        archetypes_with_noise = archetypes_updated + scaled_noise
+
+        # Ensure archetypes are within the convex hull of X
         # by applying a weighted convex combination with data points
 
         # Compute distances to find the closest data point for each archetype
@@ -1334,9 +1399,122 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             return constrained_archetype
 
         # Apply constraint to each archetype
-        constrained_archetypes = jax.vmap(_constrain_to_convex_hull)(archetypes_updated)
+        constrained_archetypes = jax.vmap(_constrain_to_convex_hull)(archetypes_with_noise)
 
         return jnp.asarray(constrained_archetypes)
+
+    def diversify_archetypes(self, archetypes, X):
+        """Non-differentiable post-processing step to ensure archetype diversity.
+
+        This method ensures the archetypes form a non-degenerate simplex with sufficient volume.
+        It is called outside the JAX-compiled update steps, as it uses non-differentiable operations.
+
+        Args:
+            archetypes: Current archetypes array
+            X: Data matrix
+
+        Returns:
+            Diversified archetypes array
+        """
+        archetypes_np = np.array(archetypes)
+        X_np = np.array(X)
+        n_archetypes = archetypes_np.shape[0]
+
+        # Calculate initial volume or proxy
+        initial_volume = self._calculate_simplex_volume(archetypes_np)
+
+        # If volume is very small, try to increase it
+        if initial_volume < self.min_volume_factor:
+            self.logger.info(
+                f"Detected potentially degenerate archetype configuration. "
+                f"Volume proxy: {initial_volume:.6f}. Attempting to diversify."
+            )
+
+            # Calculate centroid
+            centroid = np.mean(X_np, axis=0)
+
+            # For each archetype, push it away from other archetypes
+            for i in range(n_archetypes):
+                # Calculate direction away from the average of other archetypes
+                other_archetypes = np.delete(archetypes_np, i, axis=0)
+                other_centroid = np.mean(other_archetypes, axis=0)
+
+                # Direction away from other archetypes
+                direction = archetypes_np[i] - other_centroid
+                direction_norm = np.linalg.norm(direction)
+
+                if direction_norm > 1e-10:
+                    normalized_direction = direction / direction_norm
+
+                    # Determine how far we can push in this direction while staying in convex hull
+                    projections = np.dot(X_np - centroid, normalized_direction)
+                    max_projection = np.max(projections)
+
+                    current_projection = np.dot(archetypes_np[i] - centroid, normalized_direction)
+
+                    # Push outward, but stay within the convex hull
+                    # Use a blend of current position and extreme point
+                    blend_factor = 0.5  # Move halfway toward the extreme point
+                    if current_projection < max_projection:
+                        target_projection = current_projection + blend_factor * (
+                            max_projection - current_projection
+                        )
+                        archetypes_np[i] = centroid + normalized_direction * target_projection
+
+            # Re-normalize to maintain simplex constraints
+            row_sums = np.sum(archetypes_np, axis=1, keepdims=True)
+            archetypes_np = archetypes_np / np.maximum(1e-10, row_sums)
+
+            # Verify improvement
+            new_volume = self._calculate_simplex_volume(archetypes_np)
+            self.logger.info(
+                f"After diversification, volume proxy changed from {initial_volume:.6f} to {new_volume:.6f}"
+            )
+
+        return jnp.array(archetypes_np)
+
+    def _calculate_simplex_volume(self, archetypes):
+        """Calculate the volume of the simplex formed by the archetypes.
+
+        This is used to ensure that the archetypes do not collapse to a degenerate subspace.
+
+        Args:
+            archetypes: Array of shape (n_archetypes, n_features)
+
+        Returns:
+            Approximate volume of the simplex
+        """
+        n_archetypes, n_features = archetypes.shape
+
+        # If we have fewer archetypes than dimensions + 1, the volume is technically zero
+        # Instead, we'll compute a proxy metric based on pairwise distances
+        if n_archetypes <= n_features:
+            # Calculate pairwise distances between archetypes
+            pairwise_distances = np.zeros((n_archetypes, n_archetypes))
+            for i in range(n_archetypes):
+                for j in range(i + 1, n_archetypes):
+                    dist = np.linalg.norm(archetypes[i] - archetypes[j])
+                    pairwise_distances[i, j] = pairwise_distances[j, i] = dist
+
+            # Use product of pairwise distances as proxy for volume
+            # Higher values indicate archetypes are more spread out
+            volume_proxy = np.sum(pairwise_distances) / (n_archetypes * (n_archetypes - 1) / 2)
+            return volume_proxy
+        else:
+            try:
+                # When we have enough points, try to compute actual convex hull volume
+                hull = ConvexHull(archetypes)
+                return hull.volume
+            except Exception:
+                # Fallback to pairwise distance approach if convex hull fails
+                pairwise_distances = np.zeros((n_archetypes, n_archetypes))
+                for i in range(n_archetypes):
+                    for j in range(i + 1, n_archetypes):
+                        dist = np.linalg.norm(archetypes[i] - archetypes[j])
+                        pairwise_distances[i, j] = pairwise_distances[j, i] = dist
+
+                volume_proxy = np.sum(pairwise_distances) / (n_archetypes * (n_archetypes - 1) / 2)
+                return volume_proxy
 
 
 class ArchetypeTracker(ImprovedArchetypalAnalysis):
@@ -1373,6 +1551,9 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         self.boundary_proximity_history = []  # History of boundary proximity scores
         self.is_outside_history = []  # History of whether archetypes are outside the convex hull
 
+        # Store current iteration for use in adaptive projection
+        self.current_iteration = 0
+
     def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "ArchetypeTracker":
         """Train the model while documenting the positions of archetypes at each iteration.
 
@@ -1384,6 +1565,9 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         Returns:
             Self
         """
+        # Initialize loss_value at the beginning to avoid UnboundLocalError
+        loss_value = float("inf")
+
         # Data preprocessing
         if normalize:
             self.X_mean = X.mean(axis=0)
@@ -1612,6 +1796,16 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
                 arch * self.X_std + self.X_mean for arch in self.archetype_history
             ]
 
+        # After optimization loop, apply diversification to ensure non-degeneracy
+        if hasattr(self, "archetypes") and self.archetypes is not None:
+            X_processed = X if not normalize else (X - self.X_mean) / self.X_std
+            X_jax = jnp.array(X_processed)
+            self.archetypes = self.diversify_archetypes(self.archetypes, X_jax)
+
+            # Recalculate weights with updated archetypes to ensure consistency
+            if hasattr(self, "weights"):
+                self.weights = self.transform(X)
+
         return self
 
     def _calculate_weights(self, X, archetypes):
@@ -1716,228 +1910,6 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         # Scale the offset from centroid
         return centroid + scale_factor * (archetype - centroid)
 
-    def visualize_movement(
-        self,
-        feature_indices: list[int] | None = None,
-        figsize: tuple[int, int] = (12, 8),
-        interval: int = 1,
-    ):
-        """
-        Visualize how archetypes move during the optimization process.
-
-        Args:
-            feature_indices: For high-dimensional data, specify which 2 features to plot.
-                If None and data has more than 2D, PCA is used.
-            figsize: Size of the matplotlib figure
-            interval: Interval between frames for animation
-
-        Returns:
-            Matplotlib figure and animation objects (if available)
-        """
-        try:
-            import matplotlib.pyplot as plt
-            from matplotlib.animation import FuncAnimation
-        except ImportError:
-            self.logger.warning("Matplotlib required for visualization.")
-            return None, None
-
-        # Check if archetype history exists
-        if not self.archetype_history:
-            self.logger.warning("No archetype history available. Run fit() first.")
-            return None, None
-
-        if feature_indices is None:
-            feature_indices = [0, 1]
-
-        # Create figure
-        fig, ax = plt.subplots(figsize=figsize)
-
-        # Sample history (to reduce animation complexity)
-        history_sample = self.archetype_history[::interval]
-        n_iters = len(history_sample)
-
-        # Check if we need dimensionality reduction
-        if feature_indices is None and self.archetypes.shape[1] > 2:
-            self.logger.info("Using PCA to visualize archetype movement...")
-            try:
-                from sklearn.decomposition import PCA
-
-                # Stack all archetypes from all iterations
-                all_archetypes = np.vstack(list(history_sample))
-
-                # Apply PCA
-                pca = PCA(n_components=2)
-                all_archetypes_2d = pca.fit_transform(all_archetypes)
-
-                # Reshape back to iterations x archetypes x 2
-                archetype_coords = all_archetypes_2d.reshape(n_iters, self.n_archetypes, 2)
-
-                ax.set_xlabel("PCA Component 1")
-                ax.set_ylabel("PCA Component 2")
-            except ImportError:
-                self.logger.warning("Skipping PCA visualization due to missing dependencies.")
-                archetype_coords = np.array([arch[:, feature_indices] for arch in history_sample])
-                ax.set_xlabel(f"Feature {feature_indices[0]}")
-                ax.set_ylabel(f"Feature {feature_indices[1]}")
-        else:
-            # Use specified feature indices
-            archetype_coords = np.array([arch[:, feature_indices] for arch in history_sample])
-            ax.set_xlabel(f"Feature {feature_indices[0]}")
-            ax.set_ylabel(f"Feature {feature_indices[1]}")
-
-        # Plot trajectory of each archetype
-        for a in range(self.n_archetypes):
-            # Extract trajectory for this archetype
-            trajectory = archetype_coords[:, a, :]
-
-            # Plot each segment with color based on iteration
-            for i in range(1, n_iters):
-                ax.plot(
-                    trajectory[i - 1 : i + 1, 0],
-                    trajectory[i - 1 : i + 1, 1],
-                    color="blue",
-                    alpha=0.7,
-                    linewidth=2,
-                )
-
-            # Mark starting point
-            ax.scatter(
-                trajectory[0, 0],
-                trajectory[0, 1],
-                color="blue",
-                s=100,
-                marker="o",
-                label=f"Start A{a + 1}" if a == 0 else f"A{a + 1}",
-            )
-
-            # Mark final position
-            ax.scatter(
-                trajectory[-1, 0],
-                trajectory[-1, 1],
-                color="red",
-                s=100,
-                marker="*",
-                label=f"Final A{a + 1}" if a == 0 else "",
-            )
-
-        # Add colorbar to show iteration progress
-        sm = plt.cm.ScalarMappable(cmap="viridis")
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=ax)
-        cbar.set_label("Optimization Progress (Iterations)")
-
-        # Add loss curve as inset
-        loss_ax = fig.add_axes((0.15, 0.15, 0.25, 0.25))  # [left, bottom, width, height]
-        loss_ax.plot(range(0, n_iters * interval, interval), self.loss_history[::interval], "k-")
-        loss_ax.set_title("Loss Function")
-        loss_ax.set_xlabel("Iterations")
-        loss_ax.set_ylabel("Loss")
-
-        # Add title and legend
-        ax.set_title("Archetype Movement During Optimization")
-        ax.legend(loc="upper right")
-
-        plt.tight_layout()
-
-        # Create animation
-        def update(frame):
-            ax.clear()
-            ax.set_title(f"Iteration {frame * interval}")
-            ax.scatter(
-                archetype_coords[frame, :, 0],
-                archetype_coords[frame, :, 1],
-                c=np.arange(self.n_archetypes),
-                cmap="viridis",
-                s=100,
-                marker="o",
-            )
-            ax.set_xlabel(f"Feature {feature_indices[0]}" if feature_indices else "PCA Component 1")
-            ax.set_ylabel(f"Feature {feature_indices[1]}" if feature_indices else "PCA Component 2")
-            ax.legend(loc="upper right")
-            ax.set_aspect("equal")
-
-            # Update loss curve
-            loss_ax.clear()
-            loss_ax.plot(
-                range(0, (frame + 1) * interval, interval),
-                self.loss_history[: (frame + 1) * interval],
-                "k-",
-            )
-            loss_ax.set_title("Loss Function")
-            loss_ax.set_xlabel("Iterations")
-            loss_ax.set_ylabel("Loss")
-
-        anim = FuncAnimation(fig, update, frames=range(n_iters), repeat=False)
-
-        return fig, anim
-
-    def visualize_boundary_proximity(self, figsize=(10, 5)):
-        """Visualize how close archetypes are to the convex hull boundary.
-
-        Args:
-            figsize: Size of the figure
-
-        Returns:
-            Matplotlib figure
-        """
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError:
-            self.logger.warning("Matplotlib required for visualization.")
-            return None
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
-
-        # Plot boundary proximity
-        ax1.plot(self.boundary_proximity_history)
-        ax1.set_title("Boundary Proximity Score")
-        ax1.set_xlabel("Iteration")
-        ax1.set_ylabel("Score")
-        ax1.grid(True)
-
-        # Plot count of archetypes outside convex hull
-        outside_counts = [np.sum(outside) for outside in self.is_outside_history]
-        ax2.plot(outside_counts, "r-")
-        ax2.set_title("Archetypes Outside Convex Hull")
-        ax2.set_xlabel("Iteration")
-        ax2.set_ylabel("Count")
-        ax2.set_ylim(0, self.n_archetypes)
-        ax2.grid(True)
-
-        plt.tight_layout()
-        return fig
-
-    @partial(jax.jit, static_argnums=(0,))
-    def loss_function(self, archetypes, weights, X):
-        """Customized loss function with reduced boundary incentive for ArchetypeTracker.
-
-        This overrides the parent class loss function to provide more stability during tracking.
-        Specifically, it reduces the boundary incentive weight to prevent archetypes from
-        moving too rapidly in early iterations.
-        """
-        archetypes_f32 = archetypes.astype(jnp.float32)
-        weights_f32 = weights.astype(jnp.float32)
-        X_f32 = X.astype(jnp.float32)
-
-        X_reconstructed = jnp.matmul(weights_f32, archetypes_f32)
-        reconstruction_loss = jnp.mean(jnp.sum((X_f32 - X_reconstructed) ** 2, axis=1))
-
-        # Calculate entropy (higher values for uniform weights, lower for sparse weights)
-        entropy = -jnp.sum(weights_f32 * jnp.log(weights_f32 + 1e-10), axis=1)
-        entropy_reg = jnp.mean(entropy)
-
-        # Add incentive for archetypes to stay near convex hull boundary
-        # But use a much lower weight than the parent class
-        boundary_incentive = self._calculate_boundary_proximity(archetypes_f32, X_f32)
-
-        # We use a significantly reduced boundary incentive for tracking stability
-        # This matches the parent class boundary incentive level
-        total_loss = (
-            reconstruction_loss + self.lambda_reg * entropy_reg - 0.001 * boundary_incentive
-        )
-
-        return total_loss.astype(jnp.float32)
-
     def project_archetypes_with_adaptive_strength(self, archetypes, X):
         """Modified projection function that adapts its strength based on the current iteration.
 
@@ -2000,3 +1972,56 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
     def project_archetypes(self, archetypes, X):
         """Override parent class projection with adaptive version for tracking."""
         return self.project_archetypes_with_adaptive_strength(archetypes, X)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def loss_function(self, archetypes, weights, X):
+        """Customized loss function with reduced boundary incentive for ArchetypeTracker.
+
+        This overrides the parent class loss function to provide more stability during tracking.
+        Specifically, it reduces the boundary incentive weight to prevent archetypes from
+        moving too rapidly in early iterations.
+        """
+        archetypes_f32 = archetypes.astype(jnp.float32)
+        weights_f32 = weights.astype(jnp.float32)
+        X_f32 = X.astype(jnp.float32)
+
+        X_reconstructed = jnp.matmul(weights_f32, archetypes_f32)
+        reconstruction_loss = jnp.mean(jnp.sum((X_f32 - X_reconstructed) ** 2, axis=1))
+
+        # Calculate entropy (higher values for uniform weights, lower for sparse weights)
+        entropy = -jnp.sum(weights_f32 * jnp.log(weights_f32 + 1e-10), axis=1)
+        entropy_reg = jnp.mean(entropy)
+
+        # Add incentive for archetypes to stay near convex hull boundary
+        # But use a much lower weight than the parent class
+        boundary_incentive = self._calculate_boundary_proximity(archetypes_f32, X_f32)
+
+        # We use a significantly reduced boundary incentive for tracking stability
+        # This matches the parent class boundary incentive level
+        total_loss = (
+            reconstruction_loss + self.lambda_reg * entropy_reg - 0.001 * boundary_incentive
+        )
+
+        return total_loss.astype(jnp.float32)
+
+    def fit_transform(
+        self,
+        X: np.ndarray,
+        y: np.ndarray | None = None,
+        normalize: bool = False,
+        **kwargs,
+    ) -> np.ndarray:
+        """
+        Fit the model and return the transformed data.
+
+        Args:
+            X: Data matrix of shape (n_samples, n_features)
+            y: Ignored. Present for API consistency by convention.
+            normalize: Whether to normalize the data before fitting.
+            **kwargs: Additional keyword arguments for the fit method.
+
+        Returns:
+            Weight matrix representing each sample as a combination of archetypes
+        """
+        self.fit(X, normalize=normalize, **kwargs)
+        return self.transform(X)

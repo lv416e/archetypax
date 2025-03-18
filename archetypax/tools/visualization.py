@@ -567,7 +567,7 @@ class BiarchetypalAnalysisVisualizer:
         error_combined = np.linalg.norm(X - X_recon_combined, ord="fro")
 
         # Create plot with subplots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        _, axes = plt.subplots(2, 2, figsize=(15, 12))
 
         # Original data
         axes[0, 0].scatter(X[:, 0], X[:, 1], alpha=0.7, label="Original")
@@ -657,7 +657,7 @@ class BiarchetypalAnalysisVisualizer:
         weights_first_subset = weights_first[sorted_indices]
 
         # Create figure with two subplots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
+        _, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
 
         # Plot first set heatmap
         sns.heatmap(
@@ -757,7 +757,7 @@ class BiarchetypalAnalysisVisualizer:
 
         # Create figure with subplots
         n_rows = (mixture_steps + 2) // 3  # Ceiling division
-        fig, axes = plt.subplots(n_rows, min(3, mixture_steps), figsize=(15, 4 * n_rows))
+        _, axes = plt.subplots(n_rows, min(3, mixture_steps), figsize=(15, 4 * n_rows))
 
         # Flatten axes if necessary
         if mixture_steps > 3:
@@ -881,7 +881,7 @@ class BiarchetypalAnalysisVisualizer:
             weights_second_subset = np.ones((weights_second_subset.shape[0], 3)) / 3
 
         # Set up the figure with two subplots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
+        _, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
 
         # Convert barycentric coordinates to 2D for visualization
         sqrt3_2 = np.sqrt(3) / 2
