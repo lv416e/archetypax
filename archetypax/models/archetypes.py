@@ -655,9 +655,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         weights_init = self.project_weights(weights_init)
 
         # archetype initialization
-        if self.archetype_init_method == "directional":
+        if self.archetype_init_method == "directional" or self.archetype_init_method == "direction":
             archetypes_init, _ = self.directional_init(X_jax, n_samples, n_features)
-        elif self.archetype_init_method == "qhull":
+        elif self.archetype_init_method == "qhull" or self.archetype_init_method == "convex_hull":
             archetypes_init, _ = self.qhull_init(X_jax, n_samples, n_features)
         else:
             archetypes_init, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
@@ -1161,9 +1161,9 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         self.current_iteration = 0
 
         # Initialize archetypes based on selected method
-        if self.archetype_init_method == "directional":
+        if self.archetype_init_method == "directional" or self.archetype_init_method == "direction":
             archetypes, _ = self.directional_init(X_jax, n_samples, n_features)
-        elif self.archetype_init_method == "qhull":
+        elif self.archetype_init_method == "qhull" or self.archetype_init_method == "convex_hull":
             archetypes, _ = self.qhull_init(X_jax, n_samples, n_features)
         else:
             archetypes, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
