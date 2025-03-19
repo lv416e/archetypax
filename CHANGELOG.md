@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Introduction of the innovative `ArchetypeTracker` class for precise monitoring of archetype evolution during optimization
+- Comprehensive trajectory analysis tools for visualizing archetype movement patterns
+- Boundary proximity tracking with historical metrics for evolutionary pattern analysis
+- Time-series visualization of archetype convergence behaviors and stability indicators
+- Interactive Jupyter notebook interfaces for real-time archetype evolution exploration
+- Gradient flow visualization frameworks for optimization trajectory comprehension
+- Multi-dimensional scaling techniques specifically adapted for high-dimensional archetype visualization
+
+### Changed
+- Dynamically adjusted blending coefficients that respond to optimization phase and loss trajectory
+- Sophisticated parameter adaptation mechanisms based on iteration progress metrics
+- Enhanced logging system with detailed diagnostics for optimization trajectory analysis
+- Customized memory management systems for efficient archetype history tracking
+- Refined gradient clipping strategies with progressive threshold adjustments
+
+### Fixed
+- Edge case handling for extreme archetype positioning in high-dimensional feature spaces
+- Memory leakage issues in historical trajectory storage mechanisms
+- Boundary condition anomalies during complex projection calculations
+- Numerical precision challenges in gradient calculations for closely positioned archetypes
+- Thread safety concerns in parallel computation environments
+
 ## [0.1.0.dev2] - 2025/03/17
 
 ### Added
