@@ -69,11 +69,6 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             **kwargs,
         )
 
-        self.rng_key = jax.random.key(random_seed)
-        self.lambda_sparsity = lambda_sparsity
-        self.sparsity_method = sparsity_method
-        self.min_volume_factor = min_volume_factor  # Parameter controlling the minimum volume of the convex hull.
-
         # Initialize a class-specific logger with the updated class name.
         self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
         self.logger.info(
@@ -87,6 +82,14 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
                 min_volume_factor=min_volume_factor,
             )
         )
+
+        self.rng_key = jax.random.key(random_seed)
+        self.lambda_sparsity = lambda_sparsity
+        self.sparsity_method = sparsity_method
+        self.min_volume_factor = min_volume_factor  # Parameter controlling the minimum volume of the convex hull.
+
+        self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
+        self.verbose_level = kwargs.get("verbose_level", 1)
 
     @partial(jax.jit, static_argnums=(0,))
     def loss_function(self, archetypes, weights, X):
@@ -402,13 +405,15 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             )
         )
 
+        X_np = X.values if hasattr(X, "values") else X
+
         # Utilize the parent class fit method.
-        model = super().fit(X, normalize, **kwargs)
+        model = super().fit(X_np, normalize, **kwargs)
 
         # Apply post-processing to ensure archetype diversity.
         # This is executed outside the JAX-compiled optimization.
         if hasattr(model, "archetypes") and model.archetypes is not None:
-            X_jax = jnp.array(X if not normalize else (X - model.X_mean) / model.X_std)
+            X_jax = jnp.array(X_np if not normalize else (X_np - model.X_mean) / model.X_std)
             model.archetypes = self.diversify_archetypes(model.archetypes, X_jax)
 
         return model
@@ -431,5 +436,6 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         Returns:
             Transformed data matrix of shape (n_samples, n_archetypes).
         """
-        model = self.fit(X, normalize, **kwargs)
-        return model.transform(X)
+        X_np = X.values if hasattr(X, "values") else X
+        model = self.fit(X_np, normalize, **kwargs)
+        return model.transform(X_np)

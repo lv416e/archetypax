@@ -45,11 +45,15 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 - "convex_hull": Use convex hull vertices
                 - "knn": Use k-nearest neighbors
             archetype_init_method: Method for initializing archetypes
-                - "directional": Use directions from a sphere
-                - "qhull": Use convex hull vertices
-                - "kmeans++": Use k-means++ initialization
+                - "directional" or "direction": Use directions from a sphere
+                - "qhull" or "convex_hull": Use convex hull vertices
+                - "kmeans" or "kmeans++": Use k-means++ initialization
             **kwargs: Additional keyword arguments
                 - early_stopping_patience: Number of iterations to wait before stopping if no improvement
+                - verbose_level: Level of verbosity (0, 1, 2)
+                    - 0: No verbose
+                    - 1: Basic verbose
+                    - 2: Detailed verbose
         """
         super().__init__(
             n_archetypes=n_archetypes,
@@ -84,6 +88,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         self.archetype_init_method = archetype_init_method
 
         self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
+        self.verbose_level = kwargs.get("verbose_level", 1)
 
         self.rng_key = jax.random.key(random_seed)
 
@@ -111,12 +116,14 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         tol = kwargs.get("tol", self.tol)
 
         # Scale input data
+        X_np = X.values if hasattr(X, "values") else X
         if self.normalize:
             X_scaled = (
-                (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X.copy()
+                (X_np - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X_np.copy()
             )
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
         else:
-            X_scaled = X.copy()
+            X_scaled = X_np.copy()
 
         # Adaptive method selection based on dataset size
         if method == "adaptive":
@@ -153,16 +160,18 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         if self.archetypes is None:
             raise ValueError("Model must be fitted before transform")
 
-        # Scale input data
-        X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
-        X_jax = jnp.array(X_scaled)
+        X_jax = jnp.array(X, dtype=jnp.float32)
 
-        # Scale archetypes
-        archetypes_scaled = (
-            (self.archetypes - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes
-        )
+        if self.normalize:
+            archetypes_scaled = (
+                (self.archetypes - self.X_mean) / self.X_std
+                if self.X_mean is not None and self.X_std is not None
+                else self.archetypes
+            )
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            archetypes_scaled = self.archetypes
+
         archetypes_jax = jnp.array(archetypes_scaled)
 
         @jax.jit
@@ -222,14 +231,18 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     def _transform_with_adam(self, X: np.ndarray, max_iter: int = 50, tol: float = 1e-5) -> np.ndarray:
         """Transform using Adam optimizer with early stopping."""
-        X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
-        X_jax = jnp.array(X_scaled)
+        X_jax = jnp.array(X, dtype=jnp.float32)
 
-        archetypes_scaled = (
-            (self.archetypes - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes
-        )
+        if self.normalize:
+            archetypes_scaled = (
+                (self.archetypes - self.X_mean) / self.X_std
+                if self.X_mean is not None and self.X_std is not None
+                else self.archetypes
+            )
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            archetypes_scaled = self.archetypes
+
         archetypes_jax = jnp.array(archetypes_scaled)
 
         @jax.jit
@@ -289,14 +302,18 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     def _transform_with_sgd(self, X: np.ndarray, max_iter: int = 100, tol: float = 1e-5) -> np.ndarray:
         """Transform using improved SGD with adaptive learning rate and convergence criteria."""
-        X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
-        X_jax = jnp.array(X_scaled)
+        X_jax = jnp.array(X, dtype=jnp.float32)
 
-        archetypes_scaled = (
-            (self.archetypes - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes
-        )
+        if self.normalize:
+            archetypes_scaled = (
+                (self.archetypes - self.X_mean) / self.X_std
+                if self.X_mean is not None and self.X_std is not None
+                else self.archetypes
+            )
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            archetypes_scaled = self.archetypes
+
         archetypes_jax = jnp.array(archetypes_scaled)
 
         @jax.jit
@@ -651,14 +668,21 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             return new_params, opt_state, loss
 
+        X_np = X.values if hasattr(X, "values") else X
+
         # Preprocess data: scale for improved stability
-        self.X_mean = np.mean(X, axis=0)
-        self.X_std = np.std(X, axis=0)
+        self.X_mean = np.mean(X_np, axis=0)
+        self.X_std = np.std(X_np, axis=0)
+
         # Prevent division by zero with explicit type casting
         if self.X_std is not None:
             self.X_std = np.where(self.X_std < 1e-10, np.ones_like(self.X_std), self.X_std)
 
-        X_scaled = (X - self.X_mean) / self.X_std if normalize else X.copy()
+        if self.normalize:
+            X_scaled = (X_np - self.X_mean) / self.X_std
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            X_scaled = X_np.copy()
 
         # Convert to JAX array
         X_jax = jnp.array(X_scaled, dtype=jnp.float32)
@@ -726,14 +750,13 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 avg_change = np.mean(change_norms)
                 max_change = np.max(change_norms)
 
-                # Display changes (every 50 iterations or if there are significant changes)
-                if i % 50 == 0 or max_change > 0.1:
+                if (i % 50 == 0 or max_change > 1.0) and self.verbose_level >= 2:
                     self.logger.info(
                         f"Iteration {i}, Archetype changes: Average={avg_change:.6f}, Maximum={max_change:.6f}"
                     )
                     # Display indices of archetypes with significant changes
-                    if max_change > 0.01:  # Set threshold
-                        large_changes = np.where(change_norms > 0.01)[0]
+                    if max_change > 1.0:  # Set threshold
+                        large_changes = np.where(change_norms > 1.0)[0]
                         if len(large_changes) > 0:
                             self.logger.info(
                                 f"  Archetypes with significant changes: {large_changes}, Changes: {change_norms[large_changes]}"
@@ -779,7 +802,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 prev_loss = loss_value
 
                 # Show progress
-                if i % 50 == 0:
+                if i % 50 == 0 and self.verbose_level >= 1:
                     self.logger.info(
                         get_message("progress", "iteration_progress", current=i, total=self.max_iter, loss=loss_value)
                     )
@@ -834,8 +857,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         Returns:
             Weight matrix representing each sample as a combination of archetypes
         """
-        model = self.fit(X, **kwargs)
-        return np.asarray(model.transform(X, **kwargs))
+        X_np = X.values if hasattr(X, "values") else X.copy()
+        model = self.fit(X_np, **kwargs)
+        return np.asarray(model.transform(X_np, **kwargs))
 
     @partial(jax.jit, static_argnums=(0,))
     def project_archetypes(self, archetypes, X) -> jnp.ndarray:
@@ -1203,6 +1227,9 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         self.boundary_proximity_history = []  # History of boundary proximity scores
         self.is_outside_history = []  # History of whether archetypes are outside the convex hull
 
+        self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
+        self.verbose_level = kwargs.get("verbose_level", 1)
+
     def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "ArchetypeTracker":
         """Train the model while documenting the positions of archetypes at each iteration.
 
@@ -1215,13 +1242,18 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
             Self
         """
         # Data preprocessing
-        if normalize:
-            self.X_mean = X.mean(axis=0)
-            self.X_std = X.std(axis=0)
-            X = (X - self.X_mean) / self.X_std
+        self.X_mean = X.mean(axis=0)
+        self.X_std = X.std(axis=0)
+
+        X_np = X.values if hasattr(X, "values") else X
+        if self.normalize:
+            X_scaled = (X_np - self.X_mean) / self.X_std
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            X_scaled = X_np.copy()
 
         # Convert to JAX array
-        X_jax = jnp.array(X)
+        X_jax = jnp.array(X_scaled)
         n_samples, n_features = X_jax.shape
 
         # Store current iteration for use in adaptive projection
@@ -1294,13 +1326,13 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
             avg_change = np.mean(change_norms)
             max_change = np.max(change_norms)
 
-            if i % 50 == 0 or max_change > 0.1:
+            if (i % 50 == 0 or max_change > 1.0) and self.verbose_level >= 2:
                 self.logger.info(
                     f"Iteration {i}, Archetype changes: Average={avg_change:.6f}, Maximum={max_change:.6f}"
                 )
                 # Display indices of archetypes with significant changes
-                if max_change > 0.01:  # Set threshold
-                    large_changes = np.where(change_norms > 0.01)[0]
+                if max_change > 1.0:  # Set threshold
+                    large_changes = np.where(change_norms > 1.0)[0]
                     if len(large_changes) > 0:
                         self.logger.info(
                             f"  Archetypes with significant changes: {large_changes}, Changes: {change_norms[large_changes]}"
@@ -1374,7 +1406,7 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
                 no_improvement_count += 1
 
             # More aggressive early stopping for tracker to prevent excessive movement
-            if no_improvement_count >= self.early_stopping_patience:  # Reduced from 50 to 30
+            if no_improvement_count >= self.early_stopping_patience:
                 self.logger.info(
                     get_message(
                         "progress",
@@ -1398,8 +1430,7 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
 
             prev_loss = loss_value
 
-            # Print progress
-            if i % 50 == 0:
+            if i % 50 == 0 and self.verbose_level >= 1:
                 outside_count = np.sum(self.is_outside_history[-1])
                 self.logger.info(
                     f"Iteration {i}, Loss: {loss_value:.6f}, "
@@ -1424,11 +1455,11 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         weights = self._calculate_weights(X_jax, archetypes)
 
         # Store final model
-        self.archetypes = np.array(archetypes) * self.X_std + self.X_mean if normalize else np.array(archetypes)
+        self.archetypes = np.array(archetypes) * self.X_std + self.X_mean if self.normalize else np.array(archetypes)
         self.weights = np.array(weights)
 
         # Scale history if normalized
-        if normalize:
+        if self.normalize:
             self.archetype_history = [arch * self.X_std + self.X_mean for arch in self.archetype_history]
 
         return self

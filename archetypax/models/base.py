@@ -21,6 +21,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         tol: float = 1e-6,
         random_seed: int = 42,
         learning_rate: float = 0.001,
+        normalize: bool = False,
         **kwargs,
     ):
         """
@@ -32,16 +33,9 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
             tol: Convergence tolerance
             random_seed: Random seed for initialization
             learning_rate: Learning rate for optimizer (reduced for better stability)
+            normalize: Whether to normalize the data before fitting.
             **kwargs: Additional keyword arguments for the fit method.
         """
-        self.n_archetypes = n_archetypes
-        self.max_iter = max_iter
-        self.tol = tol
-        self.random_seed = random_seed
-        self.rng_key = jax.random.key(random_seed)
-        self.learning_rate = learning_rate
-
-        # Initialize logger
         self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
         self.logger.info(
             get_message(
@@ -52,6 +46,13 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
             )
         )
 
+        self.n_archetypes = n_archetypes
+        self.max_iter = max_iter
+        self.tol = tol
+        self.random_seed = random_seed
+        self.rng_key = jax.random.key(random_seed)
+        self.learning_rate = learning_rate
+        self.normalize = normalize
         # Will be set during fitting
         self.archetypes: np.ndarray | None = None
         self.weights: np.ndarray | None = None
@@ -60,6 +61,9 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         # Store scaling information
         self.X_mean: np.ndarray | None = None
         self.X_std: np.ndarray | None = None
+
+        self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
+        self.verbose_level = kwargs.get("verbose_level", 1)
 
     def loss_function(self, archetypes, weights, X):
         """Add regularization term to the loss function."""
@@ -109,9 +113,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
         dists = jnp.sum((X[:, jnp.newaxis, :] - archetypes[jnp.newaxis, :, :]) ** 2, axis=2)
         k = min(10, X.shape[0])
-        projected_archetypes = jnp.stack(
-            [_process_archetype(i) for i in range(archetypes.shape[0])]
-        )
+        projected_archetypes = jnp.stack([_process_archetype(i) for i in range(archetypes.shape[0])])
         return projected_archetypes
 
     def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "ArchetypalAnalysis":
@@ -127,13 +129,20 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
             Self
         """
         # Preprocess data: scale for improved stability
-        self.X_mean = np.mean(X, axis=0)
-        self.X_std = np.std(X, axis=0)
+        X_np = X.values if hasattr(X, "values") else X
+
+        self.X_mean = np.mean(X_np, axis=0)
+        self.X_std = np.std(X_np, axis=0)
 
         # Prevent division by zero with explicit type casting
         if self.X_std is not None:
             self.X_std = np.where(self.X_std < 1e-10, np.ones_like(self.X_std), self.X_std)
-        X_scaled = (X - self.X_mean) / self.X_std if normalize else X.copy()
+
+        if self.normalize:
+            X_scaled = (X_np - self.X_mean) / self.X_std
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            X_scaled = X_np.copy()
 
         # Convert from NumPy to JAX array
         X_jax = jnp.array(X_scaled)
@@ -145,9 +154,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
         # Initialize weights (more stable initialization)
         self.rng_key, subkey = jax.random.split(self.rng_key)
-        weights_init = jax.random.uniform(
-            subkey, (n_samples, self.n_archetypes), minval=0.1, maxval=0.9
-        )
+        weights_init = jax.random.uniform(subkey, (n_samples, self.n_archetypes), minval=0.1, maxval=0.9)
         weights_init = self.project_weights(weights_init)
 
         # Initialize archetypes (k-means++ style initialization)
@@ -245,7 +252,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
                 prev_loss = loss_value
 
                 # Show progress
-                if i % 50 == 0:
+                if i % 50 == 0 and self.verbose_level >= 1:
                     self.logger.info(f"Iteration {i}, Loss: {loss_value:.6f}")
 
             except Exception as e:
@@ -279,23 +286,29 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         if self.archetypes is None:
             raise ValueError("Model must be fitted before transform")
 
+        X_np = X.values if hasattr(X, "values") else X
+
         # Scale input data
-        X_scaled = (
-            (X - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else X
-        )
+        if self.normalize:
+            X_scaled = (X_np - self.X_mean) / self.X_std
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            X_scaled = X_np.copy()
 
         # Simple approach to find weights (simplified non-negative least squares)
         n_samples = X_scaled.shape[0]
         weights = np.zeros((n_samples, self.n_archetypes))
 
         # Scale archetypes too
-        archetypes_scaled = (
-            (self.archetypes - self.X_mean) / self.X_std
-            if self.X_mean is not None and self.X_std is not None
-            else self.archetypes
-        )
+        if self.normalize:
+            archetypes_scaled = (
+                (self.archetypes - self.X_mean) / self.X_std
+                if self.X_mean is not None and self.X_std is not None
+                else self.archetypes
+            )
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            archetypes_scaled = self.archetypes
 
         for i in range(n_samples):
             # Simple optimization for each sample
@@ -322,9 +335,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
         return weights
 
-    def fit_transform(
-        self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False
-    ) -> np.ndarray:
+    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False) -> np.ndarray:
         """
         Fit the model and transform the data.
 
@@ -336,8 +347,9 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         Returns:
             Weight matrix representing each sample as a combination of archetypes
         """
-        model = self.fit(X, normalize=normalize)
-        return np.asarray(model.transform(X))
+        X_np = X.values if hasattr(X, "values") else X
+        model = self.fit(X_np, normalize=normalize)
+        return np.asarray(model.transform(X_np))
 
     def reconstruct(self, X: np.ndarray = None) -> np.ndarray:
         """
