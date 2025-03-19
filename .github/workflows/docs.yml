@@ -1,4 +1,4 @@
-name: Validate Documentation
+name: Docs
 
 on:
   push:
