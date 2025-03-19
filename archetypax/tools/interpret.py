@@ -29,7 +29,9 @@ class ArchetypalAnalysisInterpreter:
         self.models_dict: dict[int, ArchetypalAnalysis] | None = models_dict or None
         self.results: dict[int, dict[str, Any]] | None = None
 
-    def add_model(self, n_archetypes: int, model: ArchetypalAnalysis) -> "ArchetypalAnalysisInterpreter":
+    def add_model(
+        self, n_archetypes: int, model: ArchetypalAnalysis
+    ) -> "ArchetypalAnalysisInterpreter":
         """Add a fitted model to the interpreter."""
         if model.archetypes is None or model.weights is None:
             raise ValueError("Model must be fitted before adding to interpreter")
@@ -56,7 +58,11 @@ class ArchetypalAnalysisInterpreter:
         for i in range(n_archetypes):
             # Calculate the difference between this archetype's values and the maximum values of other archetypes
             other_archetypes = np.delete(archetypes, i, axis=0)
-            max_others = np.max(other_archetypes, axis=0) if len(other_archetypes) > 0 else np.zeros(n_features)
+            max_others = (
+                np.max(other_archetypes, axis=0)
+                if len(other_archetypes) > 0
+                else np.zeros(n_features)
+            )
             distinctiveness = archetypes[i] - max_others
 
             # Sum the positive differences (features that are particularly prominent in this archetype)
@@ -92,7 +98,9 @@ class ArchetypalAnalysisInterpreter:
         # Lower scores indicate higher sparsity (better interpretability)
         return 1 - sparsity_scores
 
-    def cluster_purity(self, weights: np.ndarray, threshold: float = 0.6) -> tuple[np.ndarray, float]:
+    def cluster_purity(
+        self, weights: np.ndarray, threshold: float = 0.6
+    ) -> tuple[np.ndarray, float]:
         """
         Calculate purity of each archetype's associated data points.
 
@@ -101,7 +109,7 @@ class ArchetypalAnalysisInterpreter:
             threshold: Threshold for considering an archetype as dominant
 
         Returns:
-            Tuple of (purity scores per archetype, average purity)
+            Tuple of purity scores per archetype, average purity
         """
         n_samples, n_archetypes = weights.shape
         purity_scores = np.zeros(n_archetypes)
@@ -146,7 +154,12 @@ class ArchetypalAnalysisInterpreter:
         return gains
 
     def feature_consistency(
-        self, X: np.ndarray, n_archetypes: int, n_trials: int = 5, top_k: int = 5, random_seed: int = 42
+        self,
+        X: np.ndarray,
+        n_archetypes: int,
+        n_trials: int = 5,
+        top_k: int = 5,
+        random_seed: int = 42,
     ) -> np.ndarray:
         """
         Calculate feature importance consistency across multiple initializations.
@@ -164,7 +177,9 @@ class ArchetypalAnalysisInterpreter:
         importance_matrices = []
 
         for i in range(n_trials):
-            model = ImprovedArchetypalAnalysis(n_archetypes=n_archetypes, random_seed=random_seed + i)
+            model = ImprovedArchetypalAnalysis(
+                n_archetypes=n_archetypes, random_seed=random_seed + i
+            )
             model.fit(X)
 
             # Calculate feature importance matrix
@@ -189,7 +204,9 @@ class ArchetypalAnalysisInterpreter:
                     overlap_count += overlap / top_k
 
             total_comparisons = (n_trials * (n_trials - 1)) / 2
-            consistency_scores[i] = overlap_count / total_comparisons if total_comparisons > 0 else 0
+            consistency_scores[i] = (
+                overlap_count / total_comparisons if total_comparisons > 0 else 0
+            )
 
         return consistency_scores
 
@@ -280,19 +297,27 @@ class ArchetypalAnalysisInterpreter:
         if self.models_dict is None:
             raise ValueError("No models available for optimal archetype selection")
 
-        if method == "balance" and all("balance_score" in self.results[k] for k in list(self.models_dict.keys())[1:]):
-            scores = {k: self.results[k]["balance_score"] for k in list(self.models_dict.keys())[1:]}
+        if method == "balance" and all(
+            "balance_score" in self.results[k] for k in list(self.models_dict.keys())[1:]
+        ):
+            scores = {
+                k: self.results[k]["balance_score"] for k in list(self.models_dict.keys())[1:]
+            }
             best_k = max(scores, key=lambda k: scores[k])
 
         elif method == "interpretability":
-            scores = {k: self.results[k]["interpretability_score"] for k in list(self.models_dict.keys())}
+            scores = {
+                k: self.results[k]["interpretability_score"] for k in list(self.models_dict.keys())
+            }
             best_k = max(scores, key=lambda k: scores[k])
 
         elif method == "information_gain" and all(
             "information_gain" in self.results[k] for k in list(self.models_dict.keys())[1:]
         ):
             # Detect decay in information gain (elbow method)
-            ks = sorted(k for k in list(self.models_dict.keys()) if k > min(list(self.models_dict.keys())))
+            ks = sorted(
+                k for k in list(self.models_dict.keys()) if k > min(list(self.models_dict.keys()))
+            )
             gains = [self.results[k]["information_gain"] for k in ks]
 
             # Calculate differences in information gain
@@ -330,7 +355,7 @@ class ArchetypalAnalysisInterpreter:
             balance_scores.append(self.results[k].get("balance_score", np.nan))
 
         # Create plots
-        fig, axes = plt.subplots(3, 1, figsize=(12, 15))
+        _, axes = plt.subplots(3, 1, figsize=(12, 15))
 
         # Plot interpretability metrics
         axes[0].plot(ks, avg_distinctiveness, "o-", label="Distinctiveness")
@@ -392,12 +417,14 @@ class BiarchetypalAnalysisInterpreter:
     Provides quantitative measures for biarchetype interpretability and optimal number selection.
     """
 
-    def __init__(self, models_dict: dict[tuple[int, int], BiarchetypalAnalysis] | None = None) -> None:
+    def __init__(
+        self, models_dict: dict[tuple[int, int], BiarchetypalAnalysis] | None = None
+    ) -> None:
         """
         Initialize the interpreter.
 
         Args:
-            models_dict: Optional dictionary of {(n_archetypes_first, n_archetypes_second): model} pairs
+            models_dict: Optional dictionary of {n_archetypes_first, n_archetypes_second: model} pairs
         """
         self.models_dict: dict[tuple[int, int], BiarchetypalAnalysis] = models_dict or {}
         self.results: dict[tuple[int, int], dict[str, Any]] = {}
@@ -412,7 +439,7 @@ class BiarchetypalAnalysisInterpreter:
         except ValueError as e:
             raise ValueError(f"Model must be fitted before adding to interpreter: {e}") from e
 
-        self.models_dict[(n_archetypes_first, n_archetypes_second)] = model
+        self.models_dict[n_archetypes_first, n_archetypes_second] = model
         return self
 
     def feature_distinctiveness(self, archetypes: np.ndarray) -> np.ndarray:
@@ -431,7 +458,11 @@ class BiarchetypalAnalysisInterpreter:
         for i in range(n_archetypes):
             # Calculate the difference between this archetype's values and the maximum values of other archetypes
             other_archetypes = np.delete(archetypes, i, axis=0)
-            max_others = np.max(other_archetypes, axis=0) if len(other_archetypes) > 0 else np.zeros(n_features)
+            max_others = (
+                np.max(other_archetypes, axis=0)
+                if len(other_archetypes) > 0
+                else np.zeros(n_features)
+            )
             distinctiveness = archetypes[i] - max_others
 
             # Sum the positive differences (features that are particularly prominent in this archetype)
@@ -467,7 +498,9 @@ class BiarchetypalAnalysisInterpreter:
         # Lower scores indicate higher sparsity (better interpretability)
         return 1 - sparsity_scores
 
-    def cluster_purity(self, weights: np.ndarray, threshold: float = 0.6) -> tuple[np.ndarray, float]:
+    def cluster_purity(
+        self, weights: np.ndarray, threshold: float = 0.6
+    ) -> tuple[np.ndarray, float]:
         """
         Calculate purity of each archetype's associated data points.
 
@@ -476,7 +509,7 @@ class BiarchetypalAnalysisInterpreter:
             threshold: Threshold for considering an archetype as dominant
 
         Returns:
-            Tuple of (purity scores per archetype, average purity)
+            Tuple of purity scores per archetype, average purity
         """
         n_samples, n_archetypes = weights.shape
         purity_scores = np.zeros(n_archetypes)
@@ -511,7 +544,9 @@ class BiarchetypalAnalysisInterpreter:
                 # Retrieve row and column weights using the get_all_weights method
                 weights_first, weights_second = model.get_all_weights()
             except ValueError as e:
-                raise ValueError(f"Model with archetypes ({k1}, {k2}) must be fitted before evaluation: {e}") from e
+                raise ValueError(
+                    f"Model with archetypes ({k1}, {k2}) must be fitted before evaluation: {e}"
+                ) from e
 
             # First archetype set interpretability metrics
             distinctiveness_first = self.feature_distinctiveness(np.array(archetypes_first))
@@ -531,8 +566,12 @@ class BiarchetypalAnalysisInterpreter:
             avg_sparsity_second = np.mean(sparsity_second)
 
             # Interpretability scores (higher is better)
-            interpretability_first = (avg_distinctiveness_first + avg_sparsity_first + avg_purity_first) / 3
-            interpretability_second = (avg_distinctiveness_second + avg_sparsity_second + avg_purity_second) / 3
+            interpretability_first = (
+                avg_distinctiveness_first + avg_sparsity_first + avg_purity_first
+            ) / 3
+            interpretability_second = (
+                avg_distinctiveness_second + avg_sparsity_second + avg_purity_second
+            ) / 3
 
             # Combined score for both sets
             combined_interpretability = (interpretability_first + interpretability_second) / 2
@@ -541,7 +580,7 @@ class BiarchetypalAnalysisInterpreter:
             X_recon = model.reconstruct(X)
             recon_error = np.mean(np.sum((X - X_recon) ** 2, axis=1))
 
-            self.results[(k1, k2)] = {
+            self.results[k1, k2] = {
                 # First archetype set
                 "distinctiveness_first": distinctiveness_first,
                 "sparsity_first": sparsity_first,
@@ -584,7 +623,7 @@ class BiarchetypalAnalysisInterpreter:
 
         # Error of the baseline model
         if (min_k1, min_k2) in self.models_dict:
-            base_model = self.models_dict[(min_k1, min_k2)]
+            base_model = self.models_dict[min_k1, min_k2]
             base_recon = base_model.reconstruct(X)
             base_error = np.mean(np.sum((X - base_recon) ** 2, axis=1))
         else:
@@ -596,16 +635,18 @@ class BiarchetypalAnalysisInterpreter:
             if (k1, k2) == (min_k1, min_k2):
                 continue  # Skip the baseline model
 
-            model_error = self.results[(k1, k2)]["reconstruction_error"]
+            model_error = self.results[k1, k2]["reconstruction_error"]
             gain = (base_error - model_error) / base_error if base_error > 0 else 0
-            self.results[(k1, k2)]["information_gain"] = gain
+            self.results[k1, k2]["information_gain"] = gain
 
             # Balance score between information gain and interpretability
-            interp = self.results[(k1, k2)]["combined_interpretability"]
+            interp = self.results[k1, k2]["combined_interpretability"]
             if gain + interp > 0:
-                self.results[(k1, k2)]["balance_score"] = 2 * (gain * interp) / (gain + interp)  # Harmonic mean
+                self.results[k1, k2]["balance_score"] = (
+                    2 * (gain * interp) / (gain + interp)
+                )  # Harmonic mean
             else:
-                self.results[(k1, k2)]["balance_score"] = 0
+                self.results[k1, k2]["balance_score"] = 0
 
     def suggest_optimal_biarchetypes(self, method: str = "balance") -> tuple[int, int]:
         """
@@ -615,7 +656,7 @@ class BiarchetypalAnalysisInterpreter:
             method: Method to use for selection ('balance', 'interpretability', or 'information_gain')
 
         Returns:
-            Optimal combination of (n_archetypes_first, n_archetypes_second)
+            Optimal combination of n_archetypes_first, n_archetypes_second
         """
         if not self.results:
             raise ValueError("Must run evaluate_all_models() first")
@@ -679,10 +720,12 @@ class BiarchetypalAnalysisInterpreter:
         for i, k1 in enumerate(k1_values):
             for j, k2 in enumerate(k2_values):
                 if (k1, k2) in self.results:
-                    interpretability_matrix[i, j] = self.results[(k1, k2)]["combined_interpretability"]
-                    if "balance_score" in self.results[(k1, k2)]:
-                        balance_matrix[i, j] = self.results[(k1, k2)]["balance_score"]
-                    error_matrix[i, j] = self.results[(k1, k2)]["reconstruction_error"]
+                    interpretability_matrix[i, j] = self.results[k1, k2][
+                        "combined_interpretability"
+                    ]
+                    if "balance_score" in self.results[k1, k2]:
+                        balance_matrix[i, j] = self.results[k1, k2]["balance_score"]
+                    error_matrix[i, j] = self.results[k1, k2]["reconstruction_error"]
 
         # Create plots
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))

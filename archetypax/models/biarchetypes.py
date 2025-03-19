@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
+from archetypax.logger import get_logger, get_message
+
 from .archetypes import ImprovedArchetypalAnalysis
 
 T = TypeVar("T", bound=np.ndarray)
@@ -38,7 +40,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         tol: float = 1e-6,
         random_seed: int = 42,
         learning_rate: float = 0.001,
+        projection_method: str = "default",
         lambda_reg: float = 0.01,
+        **kwargs,
     ):
         """
         Initialize the Biarchetypal Analysis model.
@@ -50,7 +54,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             tol: Convergence tolerance
             random_seed: Random seed for initialization
             learning_rate: Learning rate for optimizer
-            lambda_reg: Regularization parameter for entropy
+            projection_method: Method for projecting archetypes
+            lambda_reg: Regularization parameter
+            **kwargs: Additional keyword arguments
         """
         # Initialize using parent class with the row archetypes
         # (we'll handle column archetypes separately)
@@ -60,6 +66,19 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             tol=tol,
             random_seed=random_seed,
             learning_rate=learning_rate,
+            **kwargs,
+        )
+
+        # Initialize class-specific logger
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        self.logger.info(
+            get_message(
+                "init",
+                "model_init",
+                model_name=self.__class__.__name__,
+                n_row_archetypes=n_row_archetypes,
+                n_col_archetypes=n_col_archetypes,
+            )
         )
 
         # Store biarchetypal specific parameters
@@ -74,6 +93,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         self.theta: np.ndarray | None = None  # Column archetypes (n_features, n_col_archetypes)
         self.gamma: np.ndarray | None = None  # Column coefficients (n_col_archetypes, n_features)
         self.biarchetypes: np.ndarray | None = None  # β·X·θ (n_row_archetypes, n_col_archetypes)
+
+        self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
+        self.verbose_level = kwargs.get("verbose_level", 1)
 
     @partial(jax.jit, static_argnums=(0,))
     def loss_function(self, params: dict[str, jnp.ndarray], X: jnp.ndarray) -> jnp.ndarray:
@@ -217,7 +239,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             projected = jnp.maximum(1e-10, projected)
             sum_projected = jnp.sum(projected)
             projected = jnp.where(
-                sum_projected > 1e-10, projected / sum_projected, jnp.ones_like(projected) / projected.shape[0]
+                sum_projected > 1e-10,
+                projected / sum_projected,
+                jnp.ones_like(projected) / projected.shape[0],
             )
 
             return projected
@@ -304,7 +328,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             projected = jnp.maximum(1e-10, projected)
             sum_projected = jnp.sum(projected)
             projected = jnp.where(
-                sum_projected > 1e-10, projected / sum_projected, jnp.ones_like(projected) / projected.shape[0]
+                sum_projected > 1e-10,
+                projected / sum_projected,
+                jnp.ones_like(projected) / projected.shape[0],
             )
 
             return projected
@@ -315,44 +341,53 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Transpose the result back to original shape
         return jnp.asarray(projected_archetypes.T)
 
-    def fit(self, X: np.ndarray, normalize: bool = False) -> "BiarchetypalAnalysis":
+    def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "BiarchetypalAnalysis":
         """
         Fit the Biarchetypal Analysis model to the data.
 
         Args:
             X: Data matrix of shape (n_samples, n_features)
             normalize: Whether to normalize the data before fitting
+            **kwargs: Additional keyword arguments for the fit method.
 
         Returns:
             Self
         """
+        X_np = X.values if hasattr(X, "values") else X
+
         # Preprocess data: scale for improved stability
-        self.X_mean = np.mean(X, axis=0)
-        self.X_std = np.std(X, axis=0)
+        self.X_mean = np.mean(X_np, axis=0)
+        self.X_std = np.std(X_np, axis=0)
+
         # Prevent division by zero
         if self.X_std is not None:
             self.X_std = np.where(self.X_std < 1e-10, np.ones_like(self.X_std), self.X_std)
-        X_scaled = (X - self.X_mean) / self.X_std if normalize else X.copy()
+
+        if normalize:
+            X_scaled = (X_np - self.X_mean) / self.X_std
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            X_scaled = X_np.copy()
 
         # Convert to JAX array with explicit dtype for better performance
         X_jax = jnp.array(X_scaled, dtype=jnp.float32)
         n_samples, n_features = X_jax.shape
 
         # Debug information
-        print(f"Data shape: {X_jax.shape}")
-        print(f"Data range: min={float(jnp.min(X_jax)):.4f}, max={float(jnp.max(X_jax)):.4f}")
-        print(f"Row archetypes: {self.n_row_archetypes}")
-        print(f"Column archetypes: {self.n_col_archetypes}")
+        self.logger.info(f"Data shape: {X_jax.shape}")
+        self.logger.info(f"Data range: min={float(jnp.min(X_jax)):.4f}, max={float(jnp.max(X_jax)):.4f}")
+        self.logger.info(f"Row archetypes: {self.n_row_archetypes}")
+        self.logger.info(f"Column archetypes: {self.n_col_archetypes}")
 
         # Initialize alpha (row coefficients) with more stable initialization
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         alpha_init = jax.random.uniform(
             subkey, (n_samples, self.n_row_archetypes), minval=0.1, maxval=0.9, dtype=jnp.float32
         )
         alpha_init = self.project_row_coefficients(alpha_init)
 
         # Initialize gamma (column coefficients)
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         gamma_init = jax.random.uniform(
             subkey, (self.n_col_archetypes, n_features), minval=0.1, maxval=0.9, dtype=jnp.float32
         )
@@ -360,7 +395,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Initialize beta (row archetypes) using sophisticated k-means++ initialization
         # This approach ensures diverse starting points that are well-distributed across the data space
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
 
         # Step 1: Select initial centroids using k-means++ algorithm
         # This ensures our archetypes start from diverse positions in the data space
@@ -387,7 +422,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 min_dists = min_dists.at[idx].set(0.0)
 
             # Select next point with probability proportional to squared distance
-            self.key, subkey = jax.random.split(self.key)
+            self.rng_key, subkey = jax.random.split(self.rng_key)
             probs = min_dists / (jnp.sum(min_dists) + 1e-10)
             next_idx = jax.random.choice(subkey, n_samples, p=probs)
             selected_indices = selected_indices.at[i].set(next_idx)
@@ -400,7 +435,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Step 3: Add controlled stochastic noise to promote exploration
         # This prevents archetypes from being too rigidly defined at initialization
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         noise = jax.random.uniform(subkey, beta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32)
         beta_init = beta_init + noise
 
@@ -408,11 +443,11 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Each row must sum to 1 to represent a valid convex combination
         beta_init = beta_init / jnp.sum(beta_init, axis=1, keepdims=True)
 
-        print("Row archetypes initialized with k-means++ strategy")
+        self.logger.info("Row archetypes initialized with k-means++ strategy")
 
         # Initialize theta (column archetypes) with advanced diversity-maximizing approach
         # This ensures column archetypes capture the most distinctive feature patterns
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
 
         # Step 1: Transpose data for feature-centric operations
         X_T = X_jax.T  # Shape: (n_features, n_samples)
@@ -426,7 +461,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         selected_features = jnp.zeros(self.n_col_archetypes, dtype=jnp.int32)
 
         # Select first feature with probability proportional to variance
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         probs = feature_variance / (jnp.sum(feature_variance) + 1e-10)
         first_idx = jax.random.choice(subkey, n_features, p=probs)
         selected_features = selected_features.at[0].set(first_idx)
@@ -458,7 +493,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             theta_init = theta_init.at[next_idx, i].set(1.0)
 
         # Step 5: Add controlled noise to promote exploration
-        self.key, subkey = jax.random.split(self.key)
+        self.rng_key, subkey = jax.random.split(self.rng_key)
         noise = jax.random.uniform(subkey, theta_init.shape, minval=0.0, maxval=0.05, dtype=jnp.float32)
         theta_init = theta_init + noise
 
@@ -466,7 +501,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Each column must sum to 1 to represent a valid convex combination
         theta_init = theta_init / jnp.sum(theta_init, axis=0, keepdims=True)
 
-        print("Column archetypes initialized with diversity-maximizing strategy")
+        self.logger.info("Column archetypes initialized with diversity-maximizing strategy")
 
         # Set up optimizer with learning rate schedule for better convergence
         # We use a sophisticated learning rate schedule with warmup and decay phases
@@ -553,7 +588,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Calculate initial loss for debugging
         initial_loss = float(self.loss_function(params, X_jax))
-        print(f"Initial loss: {initial_loss:.6f}")
+        self.logger.info(f"Initial loss: {initial_loss:.6f}")
 
         for i in range(self.max_iter):
             try:
@@ -563,7 +598,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
                 # Check for NaN
                 if jnp.isnan(loss_value):
-                    print(f"Warning: NaN detected at iteration {i}. Stopping early.")
+                    self.logger.warning(get_message("warning", "nan_detected", iteration=i))
                     break
 
                 # Record loss
@@ -584,50 +619,56 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
                         # Converge if both short-term and long-term improvements are small
                         if 0 <= rel_improvement < self.tol and 0 <= avg_improvement < self.tol * 2:
-                            print(f"Converged at iteration {i}")
-                            print(f"  - Relative improvement: {rel_improvement:.8f}")
-                            print(f"  - Average improvement: {avg_improvement:.8f}")
+                            self.logger.info(f"Converged at iteration {i}")
+                            self.logger.info(f"  - Relative improvement: {rel_improvement:.8f}")
+                            self.logger.info(f"  - Average improvement: {avg_improvement:.8f}")
                             break
                     else:
                         # Fall back to simple criterion for early iterations
                         if 0 <= rel_improvement < self.tol:
-                            print(f"Early convergence at iteration {i} with relative improvement {rel_improvement:.8f}")
+                            self.logger.info(
+                                f"Early convergence at iteration {i} with relative improvement {rel_improvement:.8f}"
+                            )
                             break
 
                 prev_loss = loss_value
 
                 # Display comprehensive progress information at regular intervals
-                if i % 25 == 0 or i < 5:
+                if (i % 25 == 0 or i < 5) and self.verbose_level >= 1:
                     # Calculate performance metrics for monitoring optimization trajectory
                     if len(self.loss_history) > 1:
                         avg_last_5 = sum(self.loss_history[-min(5, len(self.loss_history)) :]) / min(
                             5, len(self.loss_history)
                         )
                         improvement_rate = (self.loss_history[0] - loss_value) / (i + 1) if i > 0 else 0
-                        print(
+                        self.logger.info(
                             f"Iteration {i:4d} | Loss: {loss_value:.6f} | Avg(5): {avg_last_5:.6f} | Improvement rate: {improvement_rate:.8f}"
                         )
                     else:
-                        print(f"Iteration {i:4d} | Loss: {loss_value:.6f}")
+                        self.logger.info(f"Iteration {i:4d} | Loss: {loss_value:.6f}")
 
                     # Provide in-depth diagnostics at major milestones
-                    if i % 100 == 0 and i > 0:
+                    if i % 100 == 0 and i > 0 and self.verbose_level >= 2:
                         # Analyze archetype characteristics
                         alpha_sparsity = jnp.mean(jnp.sum(params["alpha"] > 0.01, axis=1) / params["alpha"].shape[1])
                         gamma_sparsity = jnp.mean(jnp.sum(params["gamma"] > 0.01, axis=0) / params["gamma"].shape[0])
-                        print(
+                        self.logger.info(
                             f"  - Alpha sparsity: {float(alpha_sparsity):.4f} | Gamma sparsity: {float(gamma_sparsity):.4f}"
                         )
-                        print(f"  - Learning rate: {float(schedule(i)):.8f}")
+                        self.logger.info(f"  - Learning rate: {float(schedule(i)):.8f}")
 
                         # Flag potential convergence issues
                         if jnp.max(params["alpha"]) > 0.99:
-                            print("  - Warning: Alpha contains near-one values, may indicate degenerate solution")
+                            self.logger.warning(
+                                "  - Warning: Alpha contains near-one values, may indicate degenerate solution"
+                            )
                         if jnp.max(params["gamma"]) > 0.99:
-                            print("  - Warning: Gamma contains near-one values, may indicate degenerate solution")
+                            self.logger.warning(
+                                "  - Warning: Gamma contains near-one values, may indicate degenerate solution"
+                            )
 
             except Exception as e:
-                print(f"Error at iteration {i}: {e!s}")
+                self.logger.error(f"Error at iteration {i}: {e!s}")
                 break
 
         # Final projection of archetypes to ensure they're on the convex hull boundary
@@ -648,18 +689,20 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         self.weights = np.array(self.alpha)  # Row weights
 
         if len(self.loss_history) > 0:
-            print(f"Final loss: {self.loss_history[-1]:.6f}")
+            self.logger.info(f"Final loss: {self.loss_history[-1]:.6f}")
         else:
-            print("Warning: No valid loss was recorded")
+            self.logger.warning("No valid loss was recorded")
 
         return self
 
-    def transform(self, X: np.ndarray) -> Any:
+    def transform(self, X: np.ndarray, y: np.ndarray | None = None, **kwargs) -> Any:
         """
         Transform new data to row and column archetype weights.
 
         Args:
             X: New data matrix of shape (n_samples, n_features)
+            y: Ignored. Present for API consistency by convention.
+            **kwargs: Additional keyword arguments for the transform method.
 
         Returns:
             Tuple of (row_weights, col_weights) representing the data in terms of archetypes
@@ -667,9 +710,16 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         if self.alpha is None or self.beta is None or self.theta is None or self.gamma is None:
             raise ValueError("Model must be fitted before transform")
 
+        X_np = X.values if hasattr(X, "values") else X
+
         # Scale input data
-        X_scaled = (X - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X
-        jnp.array(X_scaled, dtype=jnp.float32)
+        if self.X_mean is not None and self.X_std is not None:
+            X_scaled = (X_np - self.X_mean) / self.X_std
+            self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
+        else:
+            X_scaled = X_np.copy()
+
+        X_jax = jnp.array(X_scaled, dtype=jnp.float32)
 
         # Use pre-trained biarchetypes (avoid recalculating biarchetypes for new data)
         biarchetypes_jax = jnp.array(self.biarchetypes, dtype=jnp.float32)
@@ -697,7 +747,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             return alpha
 
         # Calculate row weights for each sample
-        alpha_new = jnp.array([optimize_row_weights(x) for x in X_scaled])
+        alpha_new = jnp.array([optimize_row_weights(x) for x in X_jax])
 
         # Reuse pre-trained column weights (don't recalculate for new data)
         gamma_new = self.gamma.copy()
@@ -705,7 +755,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         result = (np.asarray(alpha_new), np.asarray(gamma_new))
         return result
 
-    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False) -> Any:
+    def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False, **kwargs) -> Any:
         """
         Fit the model and transform the data.
 
@@ -713,12 +763,14 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             X: Data matrix
             y: Target values (ignored)
             normalize: Whether to normalize the data
+            **kwargs: Additional keyword arguments for the fit_transform method.
 
         Returns:
             Tuple of (row_weights, col_weights)
         """
-        self.fit(X, normalize=normalize)
-        alpha, gamma = self.transform(X)
+        X_np = X.values if hasattr(X, "values") else X
+        self.fit(X_np, normalize=normalize)
+        alpha, gamma = self.transform(X_np)
         return np.asarray(alpha), np.asarray(gamma)
 
     def reconstruct(self, X: np.ndarray = None) -> np.ndarray:

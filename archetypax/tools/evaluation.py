@@ -1,11 +1,13 @@
 """Evaluation metrics for Archetypal Analysis."""
 
+import math  # Import math module for factorial function
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy.spatial import ConvexHull, QhullError
 from scipy.spatial.distance import cdist
 from scipy.stats import entropy
 from sklearn.metrics import davies_bouldin_score, silhouette_score
@@ -231,6 +233,205 @@ class ArchetypalAnalysisEvaluator:
             "max_entropy": np.max(sample_entropy),
         }
 
+    def convex_hull_metrics(self) -> dict[str, Any]:
+        """
+        Calculate metrics related to the convex hull formed by the archetypes.
+
+        This method evaluates whether the archetypes form a non-degenerate convex hull
+        by calculating its volume/area and comparing it to the data's convex hull.
+
+        Returns:
+            Dictionary with convex hull metrics including:
+            - volume/area of the convex hull
+            - ratio compared to data hull volume/area
+            - dimensionality of the hull
+        """
+        archetypes = self.model.archetypes
+
+        if archetypes is None:
+            raise ValueError("Model must be fitted before evaluating convex hull")
+
+        # Ensure we have enough archetypes to form a convex hull
+        n_archetypes, n_features = archetypes.shape
+        min_points_needed = min(n_features + 1, n_archetypes)
+
+        hull_metrics: dict[str, Any] = {
+            "volume": 0.0,
+            "volume_ratio": 0.0,
+            "dimensionality": 0,
+            "is_degenerate": True,
+        }
+
+        # Check if we have enough points to form a hull
+        if n_archetypes < min_points_needed:
+            hull_metrics["error"] = (
+                f"Not enough archetypes ({n_archetypes}) to form a convex hull in {n_features}D space"
+            )
+            return hull_metrics
+
+        try:
+            # Calculate convex hull of archetypes
+            archetype_hull = ConvexHull(archetypes)
+            hull_metrics["volume"] = archetype_hull.volume
+            hull_metrics["dimensionality"] = archetype_hull.ndim
+            hull_metrics["is_degenerate"] = False
+
+            # If we have access to the original data, compare to data hull
+            if hasattr(self.model, "X") and self.model.X is not None:
+                try:
+                    data_hull = ConvexHull(self.model.X)
+                    hull_metrics["data_volume"] = data_hull.volume
+                    hull_metrics["volume_ratio"] = archetype_hull.volume / data_hull.volume
+                except QhullError:
+                    # Data might not form a valid convex hull
+                    hull_metrics["data_volume"] = None
+                    hull_metrics["volume_ratio"] = None
+
+        except QhullError as e:
+            # Handle the case where archetypes form a degenerate convex hull
+            hull_metrics["error"] = f"Degenerate convex hull: {e!s}"
+            hull_metrics["is_degenerate"] = True
+
+            # If hull calculation failed, calculate the n-dimensional simplex volume using determinant
+            if n_archetypes >= 2:  # Need at least 2 points for any meaningful volume
+                try:
+                    # Center the archetypes
+                    centered = archetypes - np.mean(archetypes, axis=0)
+
+                    # For 2D case (area)
+                    if n_features == 2 and n_archetypes >= 3:
+                        # Calculate area using Shoelace formula
+                        x = archetypes[:, 0]
+                        y = archetypes[:, 1]
+                        area = 0.5 * np.abs(np.sum(x * np.roll(y, 1) - np.roll(x, 1) * y))
+                        hull_metrics["volume"] = area
+                        hull_metrics["dimensionality"] = 2
+
+                    # For higher dimensions, estimate volume using matrix determinant
+                    elif n_archetypes >= n_features + 1:
+                        # Select n_features archetypes to form a basis
+                        vectors = centered[1 : n_features + 1] - centered[0]
+                        # Calculate volume of parallelotope
+                        volume = np.abs(np.linalg.det(vectors)) / math.factorial(n_features)
+                        hull_metrics["volume"] = volume
+                        hull_metrics["dimensionality"] = n_features
+
+                    if hull_metrics["volume"] > 1e-10:
+                        hull_metrics["is_degenerate"] = False
+
+                except Exception as calc_err:
+                    # Explicitly convert to string to avoid typing issues
+                    error_message = str(calc_err)
+                    # Use a placeholder numeric value for error cases
+                    hull_metrics["volume"] = 0.0
+                    hull_metrics["calculation_error"] = error_message
+
+        return hull_metrics
+
+    def plot_convex_hull(self, feature_indices: list[int] | None = None, figsize: tuple[int, int] = (10, 8)) -> None:
+        """
+        Plot the convex hull formed by archetypes in 2D or 3D.
+
+        Args:
+            feature_indices: Indices of features to use for visualization (2 or 3 features)
+            figsize: Size of the figure
+        """
+        archetypes = self.model.archetypes
+
+        if archetypes is None:
+            raise ValueError("Model must be fitted before plotting convex hull")
+
+        if feature_indices is None:
+            feature_indices = [0, 1, 2] if archetypes.shape[1] >= 3 else [0, 1]
+
+        if len(feature_indices) not in [2, 3]:
+            raise ValueError("feature_indices must contain 2 or 3 feature indices for 2D or 3D visualization")
+
+        selected_archetypes = archetypes[:, feature_indices]
+
+        plt.figure(figsize=figsize)
+        if len(feature_indices) == 2:
+            plt.scatter(
+                selected_archetypes[:, 0],
+                selected_archetypes[:, 1],
+                s=100,
+                c="r",
+                marker="o",
+                label="Archetypes",
+            )
+
+            # Try to plot the convex hull
+            try:
+                hull = ConvexHull(selected_archetypes)
+                for simplex in hull.simplices:
+                    plt.plot(selected_archetypes[simplex, 0], selected_archetypes[simplex, 1], "k-")
+
+                # Add area information
+                area = float(hull.volume)  # In 2D, volume is area
+                plt.title(f"Convex Hull of Archetypes (Area: {area:.4f})")
+            except QhullError:
+                plt.title("Archetypes (Degenerate Convex Hull)")
+
+            # Plot original data if available
+            if hasattr(self.model, "X") and self.model.X is not None:
+                data = self.model.X[:, feature_indices]
+                plt.scatter(data[:, 0], data[:, 1], s=10, alpha=0.5, label="Data")
+
+            plt.xlabel(f"Feature {feature_indices[0]}")
+            plt.ylabel(f"Feature {feature_indices[1]}")
+
+        # 3D plot
+        else:
+            ax = plt.figure().add_subplot(111, projection="3d")
+            ax.scatter(
+                selected_archetypes[:, 0],
+                selected_archetypes[:, 1],
+                selected_archetypes[:, 2],
+                # s=100,
+                color="r",
+                marker="o",
+                label="Archetypes",
+            )
+
+            # Try to plot the convex hull
+            try:
+                hull = ConvexHull(selected_archetypes)
+                for simplex in hull.simplices:
+                    ax.plot(
+                        selected_archetypes[simplex, 0],
+                        selected_archetypes[simplex, 1],
+                        selected_archetypes[simplex, 2],
+                        "k-",
+                    )
+
+                # Add volume information
+                volume = float(hull.volume)
+                ax.set_title(f"Convex Hull of Archetypes (Volume: {volume:.4f})")
+            except QhullError:
+                ax.set_title("Archetypes (Degenerate Convex Hull)")
+
+            # Plot original data if available
+            if hasattr(self.model, "X") and self.model.X is not None:
+                data = self.model.X[:, feature_indices]
+                ax.scatter(
+                    data[:, 0],
+                    data[:, 1],
+                    data[:, 2],
+                    # s=10,
+                    alpha=0.3,
+                    color="blue",
+                    label="Data",
+                )
+
+            ax.set_xlabel(f"Feature {feature_indices[0]}")
+            ax.set_ylabel(f"Feature {feature_indices[1]}")
+            if hasattr(ax, "set_zlabel"):
+                ax.set_zlabel(f"Feature {feature_indices[2]}")
+
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
     def comprehensive_evaluation(self, X: np.ndarray) -> dict[str, Any]:
         """
         Run all evaluation metrics and return comprehensive results.
@@ -253,52 +454,63 @@ class ArchetypalAnalysisEvaluator:
             "separation": self.archetype_separation(),
             "clustering": self.clustering_metrics(X),
             "diversity": self.weight_diversity(),
+            "convex_hull": self.convex_hull_metrics(),
         }
 
         return results
 
     def print_evaluation_report(self, X: np.ndarray) -> None:
         """
-        Print a human-readable evaluation report.
+        Print a comprehensive evaluation report.
 
         Args:
             X: Original data matrix
         """
         results = self.comprehensive_evaluation(X)
 
+        print("\n" + "=" * 50)
+        print(f"ARCHETYPAL ANALYSIS EVALUATION ({self.n_archetypes} archetypes)")
         print("=" * 50)
-        print(f"ARCHETYPAL ANALYSIS EVALUATION REPORT ({self.n_archetypes} archetypes, {self.n_features} features)")
-        print("=" * 50)
 
-        print("\n1. RECONSTRUCTION QUALITY:")
-        print(f"   - Relative Error: {results['reconstruction']['relative']:.4f}")
-        print(f"   - Frobenius Norm: {results['reconstruction']['frobenius']:.4f}")
-        print(f"   - Mean Absolute Error: {results['reconstruction']['mae']:.4f}")
-        print(f"   - Mean Squared Error: {results['reconstruction']['mse']:.4f}")
-        print(f"   - Explained Variance: {results['explained_variance']:.4f} (higher is better)")
+        print("\n1. RECONSTRUCTION METRICS:")
+        print(f"   - Reconstruction Error: {results['reconstruction']['relative']:.4f}")
+        print(f"   - Explained Variance: {results['explained_variance']:.4f}")
 
-        print("\n2. ARCHETYPE QUALITY:")
-        print(f"   - Average Archetype Purity: {results['purity']['overall_purity']:.4f}")
-        print(f"   - Purity Std. Deviation: {results['purity']['purity_std']:.4f}")
-        print("   - Per-archetype Purity:")
-        for arch, purity in results["purity"]["archetype_purity"].items():
-            print(f"     * {arch}: {purity:.4f}")
-
-        print("\n3. ARCHETYPE SEPARATION:")
+        print("\n2. ARCHETYPE SEPARATION:")
         print(f"   - Minimum Distance: {results['separation']['min_distance']:.4f}")
         print(f"   - Maximum Distance: {results['separation']['max_distance']:.4f}")
         print(f"   - Mean Distance: {results['separation']['mean_distance']:.4f}")
         print(f"   - Distance Ratio (min/max): {results['separation']['distance_ratio']:.4f}")
 
-        print("\n4. CLUSTERING QUALITY:")
-        print(f"   - Silhouette Score: {results['clustering']['silhouette']:.4f} (higher is better)")
-        print(f"   - Davies-Bouldin Index: {results['clustering']['davies_bouldin']:.4f} (lower is better)")
+        print("\n3. DOMINANT ARCHETYPE PURITY:")
+        print(f"   - Overall Purity: {results['purity']['overall_purity']:.4f}")
+        print(f"   - Purity Std Dev: {results['purity']['purity_std']:.4f}")
+        print("   - Per-Archetype Purity:")
+        for archetype, purity in results["purity"]["archetype_purity"].items():
+            print(f"     - {archetype}: {purity:.4f}")
+
+        print("\n4. CLUSTERING METRICS:")
+        if not np.isnan(results["clustering"]["silhouette"]):
+            print(f"   - Silhouette Score: {results['clustering']['silhouette']:.4f}")
+            print(f"   - Davies-Bouldin Index: {results['clustering']['davies_bouldin']:.4f}")
+        else:
+            print("   - Clustering metrics not available (insufficient data)")
 
         print("\n5. WEIGHT DIVERSITY:")
         print(f"   - Mean Entropy: {results['diversity']['mean_entropy']:.4f}")
-        print(f"   - Normalized Entropy: {results['diversity']['mean_normalized_entropy']:.4f} (0-1 scale)")
         print(f"   - Min Entropy: {results['diversity']['min_entropy']:.4f}")
         print(f"   - Max Entropy: {results['diversity']['max_entropy']:.4f}")
+
+        print("\n6. CONVEX HULL METRICS:")
+        hull_metrics = results["convex_hull"]
+        print(f"   - Volume/Area: {hull_metrics['volume']:.6f}")
+        if hull_metrics.get("volume_ratio") is not None:
+            print(f"   - Volume Ratio (vs Data): {hull_metrics['volume_ratio']:.4f}")
+        print(f"   - Dimensionality: {hull_metrics['dimensionality']}")
+        print(f"   - Is Degenerate: {hull_metrics['is_degenerate']}")
+
+        if "error" in hull_metrics:
+            print(f"   - Error: {hull_metrics['error']}")
 
         print("\n" + "=" * 50)
 
@@ -780,44 +992,93 @@ class BiarchetypalAnalysisEvaluator:
         diversity_metrics = self.weight_diversity()
 
         # Combine all metrics
-        return {
+        results = {
             "reconstruction": reconstruction_metrics,
             "separation": separation_metrics,
             "purity": purity_metrics,
             "diversity": diversity_metrics,
         }
 
+        # Calculate other metrics
+        if "clustering" not in results:
+            results["clustering"] = {"silhouette": np.nan, "davies_bouldin": np.nan}
+
+        if "convex_hull" not in results:
+            results["convex_hull"] = {
+                "volume": 0.0,
+                "dimensionality": 0,
+                "is_degenerate": True,
+                "volume_ratio": 0.0,
+            }
+
+        return results
+
     def print_evaluation_report(self, X: np.ndarray) -> None:
         """
         Print a comprehensive evaluation report.
 
         Args:
-            X: Data matrix
+            X: Original data matrix
         """
         results = self.comprehensive_evaluation(X)
 
-        print("===== Biarchetypal Analysis Evaluation Report =====")
-        print(f"Number of first set archetypes: {self.n_archetypes_first}")
-        print(f"Number of second set archetypes: {self.n_archetypes_second}")
-        print(f"Number of features: {self.n_features}")
-        print("\n--- Reconstruction Metrics ---")
-        print(f"Frobenius Error: {results['reconstruction']['frobenius']:.4f}")
-        print(f"MSE: {results['reconstruction']['mse']:.4f}")
-        print(f"MAE: {results['reconstruction']['mae']:.4f}")
-        print(f"Relative Error: {results['reconstruction']['relative']:.4f}")
-        print(f"Explained Variance: {results['reconstruction']['explained_variance']:.4f}")
+        print("\n" + "=" * 50)
+        print(
+            f"ARCHETYPAL ANALYSIS EVALUATION ({self.n_archetypes_first} archetypes, {self.n_archetypes_second} archetypes)"
+        )
+        print("=" * 50)
 
-        print("\n--- Archetype Separation Metrics ---")
-        print(f"Mean Distance (First Set): {results['separation']['mean_distance_first']:.4f}")
-        print(f"Mean Distance (Second Set): {results['separation']['mean_distance_second']:.4f}")
+        print("\n1. RECONSTRUCTION METRICS:")
+        print(f"   - Reconstruction Error: {results['reconstruction']['relative']:.4f}")
+        print(f"   - Explained Variance: {results['reconstruction']['explained_variance']:.4f}")
 
-        print("\n--- Purity Metrics ---")
-        print(f"Overall Purity (First Set): {results['purity']['overall_purity_first']:.4f}")
-        print(f"Overall Purity (Second Set): {results['purity']['overall_purity_second']:.4f}")
+        print("\n2. ARCHETYPE SEPARATION:")
+        print(f"   - Minimum Distance (First Set): {results['separation']['min_distance_first']:.4f}")
+        print(f"   - Maximum Distance (First Set): {results['separation']['max_distance_first']:.4f}")
+        print(f"   - Mean Distance (First Set): {results['separation']['mean_distance_first']:.4f}")
+        print(f"   - Minimum Distance (Second Set): {results['separation']['min_distance_second']:.4f}")
+        print(f"   - Maximum Distance (Second Set): {results['separation']['max_distance_second']:.4f}")
+        print(f"   - Mean Distance (Second Set): {results['separation']['mean_distance_second']:.4f}")
 
-        print("\n--- Weight Diversity Metrics ---")
-        print(f"Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}")
-        print(f"Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}")
+        print("\n3. DOMINANT ARCHETYPE PURITY:")
+        print(f"   - Overall Purity (First Set): {results['purity']['overall_purity_first']:.4f}")
+        print(f"   - Overall Purity (Second Set): {results['purity']['overall_purity_second']:.4f}")
+        print("   - Per-Archetype Purity (First Set):")
+        for archetype, purity in results["purity"]["archetype_purity_first"].items():
+            print(f"     - {archetype}: {purity:.4f}")
+        print("   - Per-Archetype Purity (Second Set):")
+        for archetype, purity in results["purity"]["archetype_purity_second"].items():
+            print(f"     - {archetype}: {purity:.4f}")
+
+        print("\n4. CLUSTERING METRICS:")
+        if not np.isnan(results["clustering"]["silhouette"]):
+            print(f"   - Silhouette Score: {results['clustering']['silhouette']:.4f}")
+            print(f"   - Davies-Bouldin Index: {results['clustering']['davies_bouldin']:.4f}")
+        else:
+            print("   - Clustering metrics not available (insufficient data)")
+
+        print("\n5. WEIGHT DIVERSITY:")
+        print(f"   - Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}")
+        print(
+            f"   - Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}"
+        )
+
+        print("\n6. CONVEX HULL METRICS:")
+        hull_metrics = results["convex_hull"]
+        print(f"   - Volume/Area (First Set): {hull_metrics['volume']:.6f}")
+        print(f"   - Volume/Area (Second Set): {hull_metrics['volume']:.6f}")
+        if hull_metrics.get("volume_ratio") is not None:
+            print(f"   - Volume Ratio (vs Data) (First Set): {hull_metrics['volume_ratio']:.4f}")
+            print(f"   - Volume Ratio (vs Data) (Second Set): {hull_metrics['volume_ratio']:.4f}")
+        print(f"   - Dimensionality (First Set): {hull_metrics['dimensionality']}")
+        print(f"   - Dimensionality (Second Set): {hull_metrics['dimensionality']}")
+        print(f"   - Is Degenerate (First Set): {hull_metrics['is_degenerate']}")
+        print(f"   - Is Degenerate (Second Set): {hull_metrics['is_degenerate']}")
+
+        if "error" in hull_metrics:
+            print(f"   - Error: {hull_metrics['error']}")
+
+        print("\n" + "=" * 50)
 
     def print_summary(self, results: dict):
         """Print a summary of the evaluation results.
