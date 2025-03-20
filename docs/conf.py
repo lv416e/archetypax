@@ -90,3 +90,7 @@ else:
     # Local build settings
     pass
     pass
+
+html_context = {
+    "display_version": True,
+}

@@ -28,6 +28,14 @@ archetypax.models.biarchetypes module
    :undoc-members:
    :show-inheritance:
 
+archetypax.models.sparse_archetypes module
+------------------------------------------
+
+.. automodule:: archetypax.models.sparse_archetypes
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Module contents
 ---------------
 

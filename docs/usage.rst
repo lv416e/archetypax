@@ -215,3 +215,64 @@ Integration with scikit-learn
     # Fit and transform
     pipeline.fit(X)
     weights = pipeline.transform(X)
+
+Sparse Archetypal Analysis
+-------------------------
+
+For datasets where interpretability is paramount, ``archetypax`` offers ``SparseArchetypalAnalysis`` which enforces sparsity constraints on archetypes:
+
+.. code-block:: python
+
+    from archetypax import SparseArchetypalAnalysis
+    import numpy as np
+
+    # Generate synthetic data
+    np.random.seed(42)
+    X = np.random.rand(100, 10)  # 100 samples, 10 features
+
+    # Initialize sparse archetypal analysis
+    model = SparseArchetypalAnalysis(
+        n_archetypes=3,
+        lambda_sparsity=0.1,     # Controls the strength of sparsity regularization
+        sparsity_method="l1",    # Options: "l1", "l0_approx", "feature_selection"
+        max_iter=500
+    )
+
+    # Fit the model
+    model.fit(X)
+
+    # Get archetypes
+    archetypes = model.archetypes
+    print("Archetypes shape:", archetypes.shape)
+
+    # Calculate sparsity scores for each archetype
+    sparsity_scores = model.get_archetype_sparsity()
+    print("Archetype sparsity scores:", sparsity_scores)
+
+    # Transform data to get weights
+    weights = model.transform(X)
+
+    # Visualize sparse archetypes
+    import matplotlib.pyplot as plt
+    from archetypax.tools.visualization import ArchetypalAnalysisVisualizer
+
+    # Plot archetype profiles showing the sparse feature representation
+    ArchetypalAnalysisVisualizer.plot_archetype_profiles(
+        model,
+        feature_names=[f"F{i+1}" for i in range(X.shape[1])],
+        highlight_threshold=0.1  # Highlight features above this threshold
+    )
+    plt.show()
+
+Benefits of sparse archetypes include:
+
+* **Improved Interpretability**: Each archetype focuses on fewer, more meaningful features
+* **Feature Selection**: Automatically identifies the most important features for each archetype
+* **Reduced Overfitting**: Sparsity acts as a form of regularization
+* **Clearer Patterns**: Makes archetypal patterns more distinct and easier to interpret
+
+The ``sparsity_method`` parameter allows you to choose different approaches to sparsity:
+
+* ``"l1"``: Traditional L1 regularization for general sparsity
+* ``"l0_approx"``: Approximation of L0 norm for more aggressive sparsity
+* ``"feature_selection"``: Focuses on selecting distinct feature subsets for each archetype
