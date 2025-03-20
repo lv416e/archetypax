@@ -1,6 +1,6 @@
 """GPU-accelerated Archetypal Analysis implementation using JAX."""
 
-__version__ = "0.1.0.dev2"
+__version__ = "0.1.0"
 
 # Maintain backward compatibility with existing code
 import sys
@@ -11,7 +11,7 @@ from . import logger, models, tools
 from .logger import get_logger, get_message
 
 # Direct imports for simplified usage
-from .models.archetypes import ImprovedArchetypalAnalysis
+from .models.archetypes import ArchetypeTracker, ImprovedArchetypalAnalysis
 from .models.base import ArchetypalAnalysis
 from .models.biarchetypes import BiarchetypalAnalysis
 from .models.sparse_archetypes import SparseArchetypalAnalysis

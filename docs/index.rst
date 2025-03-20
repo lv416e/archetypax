@@ -1,5 +1,5 @@
-Welcome to archetypax's documentation!
-===================================
+Welcome to ArchetypAX's documentation!
+=====================================
 
 ``archetypax`` is a GPU-accelerated implementation of Archetypal Analysis using JAX.
 
@@ -15,6 +15,10 @@ Archetypal Analysis is a statistical method for dimensionality reduction that re
 * Advanced optimization techniques for improved convergence
 * Comprehensive visualization tools for result interpretation
 * Extensive evaluation metrics for model assessment
+* Multiple analysis variants, including Sparse Archetypal Analysis and Biarchetypal Analysis
+* Innovative ArchetypeTracker for monitoring archetype evolution during optimization
+* Trajectory analysis tools for visualizing archetype movements and convergence patterns
+* Boundary proximity tracking with historical metrics for evolutionary pattern analysis
 
 .. toctree::
    :maxdepth: 2
@@ -24,6 +28,8 @@ Archetypal Analysis is a statistical method for dimensionality reduction that re
    usage
    examples
    reference/index
+   architecture
+   migration_guide
    contributing
 
 Indices and tables
