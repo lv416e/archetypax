@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+### Changed
+### Fixed
+
+## [0.1.0] - 2025/03/21
+
+### Added
 - Introduction of the innovative `ArchetypeTracker` class for precise monitoring of archetype evolution during optimization
 - Comprehensive trajectory analysis tools for visualizing archetype movement patterns
 - Boundary proximity tracking with historical metrics for evolutionary pattern analysis

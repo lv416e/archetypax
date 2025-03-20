@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "archetypax"
-version = "0.1.0.dev2"
+version = "0.1.0"
 description = "GPU-accelerated Archetypal Analysis implementation using JAX"
 readme = "README.md"
 authors = [{ name = "mary", email = "mary.lv416e@gmail.com" }]

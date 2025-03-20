@@ -1,6 +1,6 @@
 """GPU-accelerated Archetypal Analysis implementation using JAX."""
 
-__version__ = "0.1.0.dev2"
+__version__ = "0.1.0"
 
 # Maintain backward compatibility with existing code
 import sys
