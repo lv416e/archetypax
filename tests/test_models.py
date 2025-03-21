@@ -292,7 +292,9 @@ class TestImprovedArchetypalAnalysis:
         model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=2)
 
         # Test fit_transform with kwargs
-        weights = model.fit_transform(small_sample_data, normalize=True, method="adam", max_iter=5, tol=1e-4)
+        weights = model.fit_transform(
+            small_sample_data, normalize=True, method="adam", max_iter=5, tol=1e-4
+        )
 
         assert weights.shape == (10, 2)
         assert np.allclose(np.sum(weights, axis=1), 1.0)
@@ -570,7 +572,9 @@ class TestBiarchetypalAnalysis:
         with pytest.raises(ValueError, match="Model must be fitted before getting row archetypes"):
             model.get_row_archetypes()
 
-        with pytest.raises(ValueError, match="Model must be fitted before getting column archetypes"):
+        with pytest.raises(
+            ValueError, match="Model must be fitted before getting column archetypes"
+        ):
             model.get_col_archetypes()
 
         with pytest.raises(ValueError, match="Model must be fitted before getting row weights"):
@@ -829,7 +833,9 @@ class TestSparseArchetypalAnalysis:
         sparsity_methods = ["l1", "l0_approx", "feature_selection"]
 
         for method in sparsity_methods:
-            model = SparseArchetypalAnalysis(n_archetypes=2, max_iter=10, lambda_sparsity=0.2, sparsity_method=method)
+            model = SparseArchetypalAnalysis(
+                n_archetypes=2, max_iter=10, lambda_sparsity=0.2, sparsity_method=method
+            )
             model.fit(small_sample_data)
 
             # Basic checks
@@ -851,7 +857,9 @@ class TestSparseArchetypalAnalysis:
         # Check shape and range
         assert sparsity_scores.shape == (2,)
         assert np.all(np.abs(sparsity_scores) >= 0.0), "Sparsity scores should be non-negative"
-        assert np.all(np.abs(sparsity_scores) <= 1.0), "Sparsity scores should be less than or equal to 1"
+        assert np.all(np.abs(sparsity_scores) <= 1.0), (
+            "Sparsity scores should be less than or equal to 1"
+        )
 
     def test_error_before_sparsity_calculation(self):
         """Test error handling when calculating sparsity before fitting."""
@@ -891,7 +899,9 @@ class TestSparseArchetypalAnalysis:
 
         # Models with higher sparsity coefficients tend to have higher average sparsity scores
         # However, due to the influence of initialization, this is not guaranteed to hold true in all cases
-        assert isinstance(np.mean(sparsity_low), float), "The sparsity score should be a float even with low λ_sparsity"
+        assert isinstance(np.mean(sparsity_low), float), (
+            "The sparsity score should be a float even with low λ_sparsity"
+        )
         assert isinstance(np.mean(sparsity_high), float), (
             "The sparsity score should be a float even with high λ_sparsity"
         )
