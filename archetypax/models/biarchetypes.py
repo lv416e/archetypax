@@ -165,34 +165,22 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return coefficients / sum_coeffs
 
     @partial(jax.jit, static_argnums=(0,))
-    def project_row_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """Project row archetypes to be convex combinations of data points.
-
-        This implementation employs an advanced boundary-seeking algorithm that:
-        1. Identifies multiple extreme points in the direction of each archetype
-        2. Uses adaptive weighting to balance diversity and stability
-        3. Ensures proper simplex constraints are maintained
+    def project_row_archetypes(self, archetypes, X):
+        """Project row archetypes to the convex hull of data points.
 
         Args:
-            archetypes: Row archetype matrix (n_row_archetypes, n_samples)
-            X: Data matrix (n_samples, n_features)
+            archetypes: Archetype matrix of shape (n_row_archetypes, n_samples)
+            X: Data matrix of shape (n_samples, n_features)
 
         Returns:
-            Projected row archetype matrix with enhanced diversity
+            Projected archetypes
         """
         # Calculate the data centroid as our reference point
         centroid = jnp.mean(X, axis=0)  # Shape: (n_features,)
 
         def _project_to_boundary(archetype):
-            """Project a single archetype to the boundary of the convex hull.
-
-            This function implements a sophisticated projection strategy that:
-            1. Identifies the direction from centroid to the weighted archetype representation
-            2. Finds multiple extreme points in this direction
-            3. Creates a diverse mixture of these extreme points
-            """
+            """Project a single archetype to the boundary of the convex hull."""
             # Step 1: Calculate direction from centroid to archetype representation
-            # This vector points from the data center toward the archetype's "ideal" position
             weighted_representation = jnp.matmul(archetype, X)  # Shape: (n_features,)
             direction = weighted_representation - centroid
             direction_norm = jnp.linalg.norm(direction)
@@ -205,11 +193,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             )
 
             # Step 2: Project all data points onto this direction vector
-            # This identifies how "extreme" each point is in the archetype's direction
             projections = jnp.dot(X - centroid, normalized_direction)  # Shape: (n_samples,)
 
             # Step 3: Find multiple extreme points with adaptive k selection
-            # The number of extreme points considered adapts to the data dimensionality
             k = min(5, X.shape[0] // 10 + 2)  # Adaptive k based on dataset size
 
             # Get indices of the k most extreme points
@@ -219,7 +205,6 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             top_k_projections = projections[top_k_indices]
 
             # Step 4: Calculate weights with emphasis on the most extreme points
-            # Points with larger projections receive higher weights
             weights_unnormalized = jnp.exp(top_k_projections - jnp.max(top_k_projections))
             weights = weights_unnormalized / jnp.sum(weights_unnormalized)
 
@@ -230,12 +215,10 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 multi_hot = multi_hot.at[idx].set(weights[i])
 
             # Step 6: Mix with original archetype for stability and convergence
-            # The mixing parameter balances exploration vs. exploitation
             alpha = 0.8  # Stronger pull toward extreme points for better diversity
             projected = alpha * multi_hot + (1 - alpha) * archetype
 
             # Step 7: Apply simplex constraints with numerical stability safeguards
-            # Ensure non-negativity and proper normalization
             projected = jnp.maximum(1e-10, projected)
             sum_projected = jnp.sum(projected)
             projected = jnp.where(
@@ -252,20 +235,15 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return jnp.asarray(projected_archetypes)
 
     @partial(jax.jit, static_argnums=(0,))
-    def project_col_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """Project column archetypes to be convex combinations of features.
-
-        This implementation employs a sophisticated feature-space boundary-seeking algorithm that:
-        1. Identifies multiple extreme features in the direction of each archetype
-        2. Uses adaptive weighting based on feature importance
-        3. Ensures proper simplex constraints while maximizing diversity
+    def project_col_archetypes(self, archetypes, X):
+        """Project column archetypes to the convex hull of the transposed data.
 
         Args:
-            archetypes: Column archetype matrix (n_features, n_col_archetypes)
-            X: Data matrix (n_samples, n_features)
+            archetypes: Archetype matrix of shape (n_features, n_col_archetypes)
+            X: Data matrix of shape (n_samples, n_features)
 
         Returns:
-            Projected column archetype matrix with enhanced diversity
+            Projected archetypes
         """
         # Transpose X to work with features as data points in feature space
         X_T = X.T  # Shape: (n_features, n_samples)
@@ -274,15 +252,8 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         centroid = jnp.mean(X_T, axis=0)  # Shape: (n_samples,)
 
         def _project_feature_to_boundary(archetype):
-            """Project a single column archetype to the boundary of the feature convex hull.
-
-            This function implements an advanced projection strategy that:
-            1. Calculates a direction in sample space based on feature weights
-            2. Identifies features that are extreme in this direction
-            3. Creates a diverse mixture of these extreme features
-            """
+            """Project a single column archetype to the boundary of the feature convex hull."""
             # Step 1: Calculate direction in sample space using weighted features
-            # This avoids direct matrix multiplication for better numerical stability
             weighted_features = archetype[:, jnp.newaxis] * X_T  # Shape: (n_features, n_samples)
             direction = jnp.sum(weighted_features, axis=0) - centroid  # Shape: (n_samples,)
             direction_norm = jnp.linalg.norm(direction)
@@ -298,7 +269,6 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             projections = jnp.dot(X_T, normalized_direction)  # Shape: (n_features,)
 
             # Step 3: Find multiple extreme features with adaptive k selection
-            # The number of extreme features considered adapts to the feature dimensionality
             k = min(5, X.shape[1] // 10 + 2)  # Adaptive k based on feature space size
 
             # Get indices of the k most extreme features
@@ -308,7 +278,6 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             top_k_projections = projections[top_k_indices]
 
             # Step 4: Calculate weights with emphasis on the most extreme features
-            # Features with larger projections receive higher weights
             weights_unnormalized = jnp.exp(top_k_projections - jnp.max(top_k_projections))
             weights = weights_unnormalized / jnp.sum(weights_unnormalized)
 
@@ -319,12 +288,10 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 multi_hot = multi_hot.at[idx].set(weights[i])
 
             # Step 6: Mix with original archetype for stability and convergence
-            # The mixing parameter balances exploration vs. exploitation
             alpha = 0.8  # Stronger pull toward extreme features for better diversity
             projected = alpha * multi_hot + (1 - alpha) * archetype
 
             # Step 7: Apply simplex constraints with numerical stability safeguards
-            # Ensure non-negativity and proper normalization
             projected = jnp.maximum(1e-10, projected)
             sum_projected = jnp.sum(projected)
             projected = jnp.where(
@@ -590,22 +557,22 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         initial_loss = float(self.loss_function(params, X_jax))
         self.logger.info(f"Initial loss: {initial_loss:.6f}")
 
-        for i in range(self.max_iter):
+        for it in range(self.max_iter):
             try:
                 # Execute update step
-                params, opt_state, loss = update_step(params, opt_state, X_jax, i)
+                params, opt_state, loss = update_step(params, opt_state, X_jax, it)
                 loss_value = float(loss)
 
                 # Check for NaN
                 if jnp.isnan(loss_value):
-                    self.logger.warning(get_message("warning", "nan_detected", iteration=i))
+                    self.logger.warning(get_message("warning", "nan_detected", iteration=it))
                     break
 
                 # Record loss
                 self.loss_history.append(loss_value)
 
                 # Check convergence with sophisticated adaptive criterion
-                if i > 0:
+                if it > 0:
                     # Calculate relative improvement over the last iteration
                     rel_improvement = (prev_loss - loss_value) / (prev_loss + 1e-10)
 
@@ -619,7 +586,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
                         # Converge if both short-term and long-term improvements are small
                         if 0 <= rel_improvement < self.tol and 0 <= avg_improvement < self.tol * 2:
-                            self.logger.info(f"Converged at iteration {i}")
+                            self.logger.info(f"Converged at iteration {it}")
                             self.logger.info(f"  - Relative improvement: {rel_improvement:.8f}")
                             self.logger.info(f"  - Average improvement: {avg_improvement:.8f}")
                             break
@@ -627,14 +594,14 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                         # Fall back to simple criterion for early iterations
                         if 0 <= rel_improvement < self.tol:
                             self.logger.info(
-                                f"Early convergence at iteration {i} with relative improvement {rel_improvement:.8f}"
+                                f"Early convergence at iteration {it} with relative improvement {rel_improvement:.8f}"
                             )
                             break
 
                 prev_loss = loss_value
 
                 # Display comprehensive progress information at regular intervals
-                if (i % 25 == 0 or i < 5) and self.verbose_level >= 1:
+                if (it % 25 == 0 or it < 5) and self.verbose_level >= 1:
                     # Calculate performance metrics for monitoring optimization trajectory
                     if len(self.loss_history) > 1:
                         avg_last_5 = sum(self.loss_history[-min(5, len(self.loss_history)) :]) / min(
@@ -642,20 +609,20 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                         )
                         improvement_rate = (self.loss_history[0] - loss_value) / (i + 1) if i > 0 else 0
                         self.logger.info(
-                            f"Iteration {i:4d} | Loss: {loss_value:.6f} | Avg(5): {avg_last_5:.6f} | Improvement rate: {improvement_rate:.8f}"
+                            f"Iteration {it:4d} | Loss: {loss_value:.6f} | Avg(5): {avg_last_5:.6f} | Improvement rate: {improvement_rate:.8f}"
                         )
                     else:
-                        self.logger.info(f"Iteration {i:4d} | Loss: {loss_value:.6f}")
+                        self.logger.info(f"Iteration {it:4d} | Loss: {loss_value:.6f}")
 
                     # Provide in-depth diagnostics at major milestones
-                    if i % 100 == 0 and i > 0 and self.verbose_level >= 2:
+                    if it % 100 == 0 and it > 0 and self.verbose_level >= 2:
                         # Analyze archetype characteristics
                         alpha_sparsity = jnp.mean(jnp.sum(params["alpha"] > 0.01, axis=1) / params["alpha"].shape[1])
                         gamma_sparsity = jnp.mean(jnp.sum(params["gamma"] > 0.01, axis=0) / params["gamma"].shape[0])
                         self.logger.info(
                             f"  - Alpha sparsity: {float(alpha_sparsity):.4f} | Gamma sparsity: {float(gamma_sparsity):.4f}"
                         )
-                        self.logger.info(f"  - Learning rate: {float(schedule(i)):.8f}")
+                        self.logger.info(f"  - Learning rate: {float(schedule(it)):.8f}")
 
                         # Flag potential convergence issues
                         if jnp.max(params["alpha"]) > 0.99:
@@ -668,7 +635,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                             )
 
             except Exception as e:
-                self.logger.error(f"Error at iteration {i}: {e!s}")
+                self.logger.error(f"Error at iteration {it}: {e!s}")
                 break
 
         # Final projection of archetypes to ensure they're on the convex hull boundary

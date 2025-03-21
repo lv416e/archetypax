@@ -229,15 +229,15 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         initial_loss = float(self.loss_function(archetypes_init, weights_init, X_jax))
         self.logger.info(f"Initial loss: {initial_loss:.6f}")
 
-        for i in range(self.max_iter):
+        for it in range(self.max_iter):
             # Execute update step
             try:
-                params, opt_state, loss = update_step(params, opt_state, X_jax, i)
+                params, opt_state, loss = update_step(params, opt_state, X_jax, it)
                 loss_value = float(loss)
 
                 # Check for NaN
                 if jnp.isnan(loss_value):
-                    self.logger.warning(get_message("warning", "nan_detected", iteration=i))
+                    self.logger.warning(get_message("warning", "nan_detected", iteration=it))
                     # Use last valid parameters
                     break
 
@@ -245,18 +245,18 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
                 self.loss_history.append(loss_value)
 
                 # Check convergence
-                if i > 0 and abs(prev_loss - loss_value) < self.tol:
-                    self.logger.info(f"Converged at iteration {i}")
+                if it > 0 and abs(prev_loss - loss_value) < self.tol:
+                    self.logger.info(f"Converged at iteration {it}")
                     break
 
                 prev_loss = loss_value
 
                 # Show progress
-                if i % 50 == 0 and self.verbose_level >= 1:
-                    self.logger.info(f"Iteration {i}, Loss: {loss_value:.6f}")
+                if it % 50 == 0 and self.verbose_level >= 1:
+                    self.logger.info(f"Iteration {it}, Loss: {loss_value:.6f}")
 
             except Exception as e:
-                self.logger.error(f"Error at iteration {i}: {e!s}")
+                self.logger.error(f"Error at iteration {it}: {e!s}")
                 break
 
         # Inverse scale transformation

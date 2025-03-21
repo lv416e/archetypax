@@ -108,23 +108,18 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Introduce an incentive for archetypes to remain near the boundary of the convex hull.
         boundary_incentive = self._calculate_boundary_proximity(archetypes_f32, X_f32)
 
-        # Compute the sparsity penalty based on the selected method.
-        if self.sparsity_method == "l1":
-            # L1 regularization to encourage sparsity in archetypes.
-            sparsity_penalty = jnp.mean(jnp.sum(jnp.abs(archetypes_f32), axis=1))
-        elif self.sparsity_method == "l0_approx":
-            # Approximation of the L0 norm using a continuous function.
-            # This provides a smoother approximation for counting non-zero elements.
-            epsilon = 1e-6
-            sparsity_penalty = jnp.mean(jnp.sum(1 - jnp.exp(-(archetypes_f32**2) / epsilon), axis=1))
-        elif self.sparsity_method == "feature_selection":
-            # Encourages each archetype to concentrate on a subset of features
-            # by penalizing uniform distribution across features.
-            archetype_entropy = -jnp.sum(archetypes_f32 * jnp.log(archetypes_f32 + 1e-10), axis=1)
-            sparsity_penalty = jnp.mean(archetype_entropy)
-        else:
-            # Default to L1 if the method is unrecognized.
-            sparsity_penalty = jnp.mean(jnp.sum(jnp.abs(archetypes_f32), axis=1))
+        # Compute the sparsity penalty based on the selected method using a dictionary dispatch
+        sparsity_methods = {
+            "l1": lambda arc: jnp.mean(jnp.sum(jnp.abs(arc), axis=1)),
+            "l0_approx": lambda arc: jnp.mean(jnp.sum(1 - jnp.exp(-(arc**2) / 1e-6), axis=1)),
+            "feature_selection": lambda arc: jnp.mean(-jnp.sum(arc * jnp.log(arc + 1e-10), axis=1)),
+        }
+
+        # Get the sparsity method or default to L1
+        sparsity_method_fn = sparsity_methods.get(self.sparsity_method, sparsity_methods["l1"])
+
+        # Calculate sparsity penalty
+        sparsity_penalty = sparsity_method_fn(archetypes_f32)
 
         # Calculate the archetype diversity penalty based on pairwise similarity.
         n_archetypes = archetypes_f32.shape[0]
@@ -206,22 +201,13 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         # First, perform the standard archetype update.
         archetypes_updated = super().update_archetypes(archetypes, weights, X)
 
-        # Apply an additional sparsity promotion based on the selected method.
-        if self.sparsity_method == "feature_selection":
-            # For feature selection, apply soft thresholding to enhance feature selectivity.
-            # This step retains the largest values in each archetype while shrinking smaller values.
+        # Dictionary for sparsity methods
+        sparsity_methods = {"feature_selection": lambda arc: self._apply_feature_selection(arc)}
 
-            # Calculate thresholds for each archetype (adaptive thresholding).
-            thresholds = jnp.percentile(archetypes_updated, 50, axis=1, keepdims=True)
-
-            # Soft thresholding: shrink values below the threshold.
-            shrinkage_factor = 0.7  # Controls the aggressiveness of shrinking small values.
-            mask = archetypes_updated < thresholds
-            archetypes_updated = jnp.where(mask, archetypes_updated * shrinkage_factor, archetypes_updated)
-
-            # Re-normalize to maintain simplex constraints.
-            row_sums = jnp.sum(archetypes_updated, axis=1, keepdims=True)
-            archetypes_updated = archetypes_updated / jnp.maximum(1e-10, row_sums)
+        # Apply sparsity method if available in the dictionary
+        sparsity_method_fn = sparsity_methods.get(self.sparsity_method)
+        if sparsity_method_fn:
+            archetypes_updated = sparsity_method_fn(archetypes_updated)
 
         # Calculate feature-wise variance of archetypes to identify potential degeneracy.
         # If variance is too low in some features across archetypes, it suggests potential degeneracy.
@@ -287,6 +273,25 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         constrained_archetypes = jax.vmap(_constrain_to_convex_hull)(archetypes_with_noise)
 
         return jnp.asarray(constrained_archetypes)
+
+    def _apply_feature_selection(self, archetypes_updated):
+        """Apply feature selection sparsity method."""
+        # For feature selection, apply soft thresholding to enhance feature selectivity.
+        # This step retains the largest values in each archetype while shrinking smaller values.
+
+        # Calculate thresholds for each archetype (adaptive thresholding).
+        thresholds = jnp.percentile(archetypes_updated, 50, axis=1, keepdims=True)
+
+        # Soft thresholding: shrink values below the threshold.
+        shrinkage_factor = 0.7  # Controls the aggressiveness of shrinking small values.
+        mask = archetypes_updated < thresholds
+        archetypes_updated = jnp.where(mask, archetypes_updated * shrinkage_factor, archetypes_updated)
+
+        # Re-normalize to maintain simplex constraints.
+        row_sums = jnp.sum(archetypes_updated, axis=1, keepdims=True)
+        archetypes_updated = archetypes_updated / jnp.maximum(1e-10, row_sums)
+
+        return archetypes_updated
 
     def diversify_archetypes(self, archetypes, X):
         """Non-differentiable post-processing step to ensure archetype diversity.
