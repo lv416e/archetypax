@@ -70,7 +70,27 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         )
 
         # Initialize a class-specific logger with the updated class name.
-        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        if isinstance(kwargs.get("logger_level"), str) and kwargs.get("logger_level") is not None:
+            logger_level = kwargs["logger_level"].upper()
+        elif isinstance(kwargs.get("logger_level"), int) and kwargs.get("logger_level") is not None:
+            logger_level = {
+                0: "DEBUG",
+                1: "INFO",
+                2: "WARNING",
+                3: "ERROR",
+                4: "CRITICAL",
+            }[kwargs["logger_level"]]
+        elif "logger_level" not in kwargs and "verbose_level" in kwargs and kwargs["verbose_level"] is not None:
+            logger_level = {
+                4: "DEBUG",
+                3: "INFO",
+                2: "WARNING",
+                1: "ERROR",
+                0: "CRITICAL",
+            }[kwargs["verbose_level"]]
+        else:
+            logger_level = "ERROR"
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}", level=logger_level)
         self.logger.info(
             get_message(
                 "init",
@@ -80,6 +100,15 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
                 sparsity_method=sparsity_method,
                 lambda_sparsity=lambda_sparsity,
                 min_volume_factor=min_volume_factor,
+                learning_rate=learning_rate,
+                lambda_reg=lambda_reg,
+                normalize=normalize,
+                projection_method=projection_method,
+                projection_alpha=projection_alpha,
+                archetype_init_method=archetype_init_method,
+                max_iter=max_iter,
+                tol=tol,
+                random_seed=random_seed,
             )
         )
 
@@ -87,13 +116,20 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         self.lambda_sparsity = lambda_sparsity
         self.sparsity_method = sparsity_method
         self.min_volume_factor = min_volume_factor  # Parameter controlling the minimum volume of the convex hull.
-
         self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
-        self.verbose_level = kwargs.get("verbose_level", 1)
 
     @partial(jax.jit, static_argnums=(0,))
-    def loss_function(self, archetypes, weights, X):
-        """JIT-compiled loss function incorporating a sparsity constraint on archetypes."""
+    def loss_function(self, archetypes: jnp.ndarray, weights: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
+        """JIT-compiled loss function incorporating a sparsity constraint on archetypes.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            weights: Weight matrix of shape (n_samples, n_archetypes)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Loss value as a scalar
+        """
         archetypes_f32 = archetypes.astype(jnp.float32)
         weights_f32 = weights.astype(jnp.float32)
         X_f32 = X.astype(jnp.float32)
@@ -150,9 +186,9 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             + diversity_weight * archetype_diversity_penalty
         )
 
-        return total_loss.astype(jnp.float32)
+        return jnp.asarray(total_loss).astype(jnp.float32)
 
-    def _calculate_simplex_volume(self, archetypes):
+    def _calculate_simplex_volume(self, archetypes: jnp.ndarray) -> float:
         """Calculate the volume of the simplex formed by the archetypes.
 
         This is utilized to ensure that the archetypes do not collapse into a degenerate subspace.
@@ -178,12 +214,12 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             # Use the product of pairwise distances as a proxy for volume.
             # Higher values indicate that archetypes are more spread out.
             volume_proxy = np.sum(pairwise_distances) / (n_archetypes * (n_archetypes - 1) / 2)
-            return volume_proxy
+            return float(volume_proxy)
         else:
             try:
                 # When there are enough points, attempt to compute the actual convex hull volume.
                 hull = ConvexHull(archetypes)
-                return hull.volume
+                return float(hull.volume)
             except Exception:
                 # Fallback to the pairwise distance approach if the convex hull computation fails.
                 pairwise_distances = np.zeros((n_archetypes, n_archetypes))
@@ -193,11 +229,20 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
                         pairwise_distances[i, j] = pairwise_distances[j, i] = dist
 
                 volume_proxy = np.sum(pairwise_distances) / (n_archetypes * (n_archetypes - 1) / 2)
-                return volume_proxy
+                return float(volume_proxy)
 
     @partial(jax.jit, static_argnums=(0,))
-    def update_archetypes(self, archetypes, weights, X) -> jnp.ndarray:
-        """Update archetypes with an additional step to promote sparsity."""
+    def update_archetypes(self, archetypes: jnp.ndarray, weights: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
+        """Update archetypes with an additional step to promote sparsity.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            weights: Weight matrix of shape (n_samples, n_archetypes)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Updated archetype matrix of shape (n_archetypes, n_features)
+        """
         # First, perform the standard archetype update.
         archetypes_updated = super().update_archetypes(archetypes, weights, X)
 
@@ -238,7 +283,7 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         centroid = jnp.mean(X, axis=0)
 
         # Process each archetype to ensure it resides within the convex hull.
-        def _constrain_to_convex_hull(archetype):
+        def _constrain_to_convex_hull(archetype: jnp.ndarray) -> jnp.ndarray:
             # Direction from centroid to archetype.
             direction = archetype - centroid
             direction_norm = jnp.linalg.norm(direction)
@@ -274,8 +319,15 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         return jnp.asarray(constrained_archetypes)
 
-    def _apply_feature_selection(self, archetypes_updated):
-        """Apply feature selection sparsity method."""
+    def _apply_feature_selection(self, archetypes_updated: jnp.ndarray) -> jnp.ndarray:
+        """Apply feature selection sparsity method.
+
+        Args:
+            archetypes_updated: Archetype matrix to apply feature selection to
+
+        Returns:
+            Updated archetype matrix with enhanced feature selectivity
+        """
         # For feature selection, apply soft thresholding to enhance feature selectivity.
         # This step retains the largest values in each archetype while shrinking smaller values.
 
@@ -293,25 +345,23 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         return archetypes_updated
 
-    def diversify_archetypes(self, archetypes, X):
+    def diversify_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Non-differentiable post-processing step to ensure archetype diversity.
 
         This method guarantees that the archetypes form a non-degenerate simplex with sufficient volume.
         It is invoked outside the JAX-compiled update steps, as it employs non-differentiable operations.
 
         Args:
-            archetypes: Current archetypes array.
-            X: Data matrix.
+            archetypes: Current archetypes array of shape (n_archetypes, n_features).
+            X: Data matrix of shape (n_samples, n_features).
 
         Returns:
-            Diversified archetypes array.
+            Diversified archetypes array of shape (n_archetypes, n_features).
         """
-        archetypes_np = np.array(archetypes)
-        X_np = np.array(X)
-        n_archetypes = archetypes_np.shape[0]
+        n_archetypes = archetypes.shape[0]
 
         # Calculate initial volume or proxy.
-        initial_volume = self._calculate_simplex_volume(archetypes_np)
+        initial_volume = self._calculate_simplex_volume(archetypes)
 
         # If the volume is exceedingly small, attempt to increase it.
         if initial_volume < self.min_volume_factor:
@@ -321,45 +371,45 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
             )
 
             # Calculate centroid.
-            centroid = np.mean(X_np, axis=0)
+            centroid = np.mean(X, axis=0)
 
             # For each archetype, push it away from other archetypes.
             for i in range(n_archetypes):
                 # Calculate direction away from the average of other archetypes.
-                other_archetypes = np.delete(archetypes_np, i, axis=0)
+                other_archetypes = np.delete(archetypes, i, axis=0)
                 other_centroid = np.mean(other_archetypes, axis=0)
 
                 # Direction away from other archetypes.
-                direction = archetypes_np[i] - other_centroid
+                direction = archetypes[i] - other_centroid
                 direction_norm = np.linalg.norm(direction)
 
                 if direction_norm > 1e-10:
                     normalized_direction = direction / direction_norm
 
                     # Determine how far we can push in this direction while remaining within the convex hull.
-                    projections = np.dot(X_np - centroid, normalized_direction)
+                    projections = np.dot(X - centroid, normalized_direction)
                     max_projection = np.max(projections)
 
-                    current_projection = np.dot(archetypes_np[i] - centroid, normalized_direction)
+                    current_projection = np.dot(archetypes[i] - centroid, normalized_direction)
 
                     # Push outward, but remain within the convex hull.
                     # Utilize a blend of the current position and the extreme point.
                     blend_factor = 0.5  # Move halfway toward the extreme point.
                     if current_projection < max_projection:
                         target_projection = current_projection + blend_factor * (max_projection - current_projection)
-                        archetypes_np[i] = centroid + normalized_direction * target_projection
+                        archetypes[i] = centroid + normalized_direction * target_projection
 
             # Re-normalize to maintain simplex constraints.
-            row_sums = np.sum(archetypes_np, axis=1, keepdims=True)
-            archetypes_np = archetypes_np / np.maximum(1e-10, row_sums)
+            row_sums = np.sum(archetypes, axis=1, keepdims=True)
+            archetypes = archetypes / np.maximum(1e-10, row_sums)
 
             # Verify improvement.
-            new_volume = self._calculate_simplex_volume(archetypes_np)
+            new_volume = self._calculate_simplex_volume(archetypes)
             self.logger.info(
                 f"After diversification, volume proxy changed from {initial_volume:.6f} to {new_volume:.6f}"
             )
 
-        return jnp.array(archetypes_np)
+        return archetypes
 
     def get_archetype_sparsity(self) -> np.ndarray:
         """Calculate the sparsity of each archetype.
@@ -418,8 +468,11 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Apply post-processing to ensure archetype diversity.
         # This is executed outside the JAX-compiled optimization.
         if hasattr(model, "archetypes") and model.archetypes is not None:
-            X_jax = jnp.array(X_np if not normalize else (X_np - model.X_mean) / model.X_std)
-            model.archetypes = self.diversify_archetypes(model.archetypes, X_jax)
+            archetypes = jnp.asarray(model.archetypes)
+            X_jax = jnp.asarray(X_np if not normalize else (X_np - model.X_mean) / model.X_std)
+
+            archetypes = self.diversify_archetypes(archetypes=archetypes, X=X_jax)
+            model.archetypes = np.asarray(archetypes)
 
         return model
 
@@ -433,8 +486,8 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         """Fit the Sparse Archetypal Analysis model to the data and return the transformed data.
 
         Args:
-            X: Input data matrix of shape (n_samples, n_features).
-            y: Target values (not used).
+            X: Data matrix of shape (n_samples, n_features)
+            y: Ignored. Present for API consistency by convention.
             normalize: Whether to normalize data prior to fitting.
             **kwargs: Additional keyword arguments.
 

@@ -70,7 +70,27 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         )
 
         # Initialize class-specific logger
-        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        if isinstance(kwargs.get("logger_level"), str) and kwargs.get("logger_level") is not None:
+            logger_level = kwargs["logger_level"].upper()
+        elif isinstance(kwargs.get("logger_level"), int) and kwargs.get("logger_level") is not None:
+            logger_level = {
+                0: "DEBUG",
+                1: "INFO",
+                2: "WARNING",
+                3: "ERROR",
+                4: "CRITICAL",
+            }[kwargs["logger_level"]]
+        elif "logger_level" not in kwargs and "verbose_level" in kwargs and kwargs["verbose_level"] is not None:
+            logger_level = {
+                4: "DEBUG",
+                3: "INFO",
+                2: "WARNING",
+                1: "ERROR",
+                0: "CRITICAL",
+            }[kwargs["verbose_level"]]
+        else:
+            logger_level = "ERROR"
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}", level=logger_level)
         self.logger.info(
             get_message(
                 "init",
@@ -78,6 +98,12 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 model_name=self.__class__.__name__,
                 n_row_archetypes=n_row_archetypes,
                 n_col_archetypes=n_col_archetypes,
+                max_iter=max_iter,
+                tol=tol,
+                random_seed=random_seed,
+                learning_rate=learning_rate,
+                projection_method=projection_method,
+                lambda_reg=lambda_reg,
             )
         )
 
@@ -95,7 +121,6 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         self.biarchetypes: np.ndarray | None = None  # β·X·θ (n_row_archetypes, n_col_archetypes)
 
         self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
-        self.verbose_level = kwargs.get("verbose_level", 1)
 
     @partial(jax.jit, static_argnums=(0,))
     def loss_function(self, params: dict[str, jnp.ndarray], X: jnp.ndarray) -> jnp.ndarray:
@@ -103,10 +128,10 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         Args:
             params: Dictionary containing alpha, beta, theta, gamma
-            X: Data matrix
+            X: Data matrix of shape (n_samples, n_features)
 
         Returns:
-            Reconstruction loss
+            Loss value
         """
         # Convert to float32 for better numerical stability
         alpha = params["alpha"].astype(jnp.float32)  # (n_samples, n_row_archetypes)
@@ -165,7 +190,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return coefficients / sum_coeffs
 
     @partial(jax.jit, static_argnums=(0,))
-    def project_row_archetypes(self, archetypes, X):
+    def project_row_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Project row archetypes to the convex hull of data points.
 
         Args:
@@ -235,7 +260,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return jnp.asarray(projected_archetypes)
 
     @partial(jax.jit, static_argnums=(0,))
-    def project_col_archetypes(self, archetypes, X):
+    def project_col_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Project column archetypes to the convex hull of the transposed data.
 
         Args:
@@ -251,7 +276,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Calculate the feature centroid as our reference point
         centroid = jnp.mean(X_T, axis=0)  # Shape: (n_samples,)
 
-        def _project_feature_to_boundary(archetype):
+        def _project_feature_to_boundary(archetype: jnp.ndarray) -> jnp.ndarray:
             """Project a single column archetype to the boundary of the feature convex hull."""
             # Step 1: Calculate direction in sample space using weighted features
             weighted_features = archetype[:, jnp.newaxis] * X_T  # Shape: (n_features, n_samples)
@@ -509,7 +534,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
         # Define update step with JIT compilation for speed
         @partial(jax.jit, static_argnums=(3,))
-        def update_step(params, opt_state, X, iteration):
+        def update_step(
+            params: dict[str, jnp.ndarray], opt_state: optax.OptState, X: jnp.ndarray, iteration: int
+        ) -> tuple[dict[str, jnp.ndarray], optax.OptState, jnp.ndarray]:
             """Execute a single optimization step."""
 
             # Loss function
@@ -601,7 +628,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 prev_loss = loss_value
 
                 # Display comprehensive progress information at regular intervals
-                if (it % 25 == 0 or it < 5) and self.verbose_level >= 1:
+                if it % 25 == 0 or it < 5:
                     # Calculate performance metrics for monitoring optimization trajectory
                     if len(self.loss_history) > 1:
                         avg_last_5 = sum(self.loss_history[-min(5, len(self.loss_history)) :]) / min(
@@ -609,30 +636,46 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                         )
                         improvement_rate = (self.loss_history[0] - loss_value) / (i + 1) if i > 0 else 0
                         self.logger.info(
-                            f"Iteration {it:4d} | Loss: {loss_value:.6f} | Avg(5): {avg_last_5:.6f} | Improvement rate: {improvement_rate:.8f}"
+                            get_message(
+                                "progress",
+                                "iteration_progress",
+                                current=it,
+                                total=self.max_iter,
+                                loss=loss_value,
+                                avg_last_5=avg_last_5,
+                                improvement_rate=improvement_rate,
+                            )
                         )
                     else:
-                        self.logger.info(f"Iteration {it:4d} | Loss: {loss_value:.6f}")
-
-                    # Provide in-depth diagnostics at major milestones
-                    if it % 100 == 0 and it > 0 and self.verbose_level >= 2:
-                        # Analyze archetype characteristics
-                        alpha_sparsity = jnp.mean(jnp.sum(params["alpha"] > 0.01, axis=1) / params["alpha"].shape[1])
-                        gamma_sparsity = jnp.mean(jnp.sum(params["gamma"] > 0.01, axis=0) / params["gamma"].shape[0])
                         self.logger.info(
-                            f"  - Alpha sparsity: {float(alpha_sparsity):.4f} | Gamma sparsity: {float(gamma_sparsity):.4f}"
+                            get_message(
+                                "progress",
+                                "iteration_progress",
+                                current=it,
+                                total=self.max_iter,
+                                loss=loss_value,
+                            )
                         )
-                        self.logger.info(f"  - Learning rate: {float(schedule(it)):.8f}")
 
-                        # Flag potential convergence issues
-                        if jnp.max(params["alpha"]) > 0.99:
-                            self.logger.warning(
-                                "  - Warning: Alpha contains near-one values, may indicate degenerate solution"
-                            )
-                        if jnp.max(params["gamma"]) > 0.99:
-                            self.logger.warning(
-                                "  - Warning: Gamma contains near-one values, may indicate degenerate solution"
-                            )
+                # Provide in-depth diagnostics at major milestones
+                if it % 100 == 0 and it > 0:
+                    # Analyze archetype characteristics
+                    alpha_sparsity = jnp.mean(jnp.sum(params["alpha"] > 0.01, axis=1) / params["alpha"].shape[1])
+                    gamma_sparsity = jnp.mean(jnp.sum(params["gamma"] > 0.01, axis=0) / params["gamma"].shape[0])
+                    self.logger.debug(
+                        f"  - Alpha sparsity: {float(alpha_sparsity):.4f} | Gamma sparsity: {float(gamma_sparsity):.4f}"
+                    )
+                    self.logger.debug(f"  - Learning rate: {float(schedule(it)):.8f}")
+
+                    # Flag potential convergence issues
+                    if jnp.max(params["alpha"]) > 0.99:
+                        self.logger.warning(
+                            "  - Warning: Alpha contains near-one values, may indicate degenerate solution"
+                        )
+                    if jnp.max(params["gamma"]) > 0.99:
+                        self.logger.warning(
+                            "  - Warning: Gamma contains near-one values, may indicate degenerate solution"
+                        )
 
             except Exception as e:
                 self.logger.error(f"Error at iteration {it}: {e!s}")
@@ -678,15 +721,14 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             raise ValueError("Model must be fitted before transform")
 
         X_np = X.values if hasattr(X, "values") else X
+        X_jax = jnp.array(X_np, dtype=jnp.float32)
 
         # Scale input data
         if self.X_mean is not None and self.X_std is not None:
-            X_scaled = (X_np - self.X_mean) / self.X_std
+            X_scaled = (X_jax - self.X_mean) / self.X_std
             self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
         else:
-            X_scaled = X_np.copy()
-
-        X_jax = jnp.array(X_scaled, dtype=jnp.float32)
+            X_scaled = X_jax.copy()
 
         # Use pre-trained biarchetypes (avoid recalculating biarchetypes for new data)
         biarchetypes_jax = jnp.array(self.biarchetypes, dtype=jnp.float32)
@@ -714,7 +756,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             return alpha
 
         # Calculate row weights for each sample
-        alpha_new = jnp.array([optimize_row_weights(x) for x in X_jax])
+        alpha_new = jnp.array([optimize_row_weights(x) for x in X_scaled])
 
         # Reuse pre-trained column weights (don't recalculate for new data)
         gamma_new = self.gamma.copy()
@@ -740,7 +782,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         alpha, gamma = self.transform(X_np)
         return np.asarray(alpha), np.asarray(gamma)
 
-    def reconstruct(self, X: np.ndarray = None) -> np.ndarray:
+    def reconstruct(self, X: np.ndarray | None = None) -> np.ndarray:
         """
         Reconstruct data from biarchetypes.
 
