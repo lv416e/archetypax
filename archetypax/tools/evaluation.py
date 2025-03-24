@@ -62,9 +62,13 @@ class ArchetypalAnalysisEvaluator:
             return float(np.mean((X - X_reconstructed) ** 2))
         elif metric == "relative":
             # Relative error
-            return float(np.linalg.norm(X - X_reconstructed, ord="fro") / np.linalg.norm(X, ord="fro"))
+            return float(
+                np.linalg.norm(X - X_reconstructed, ord="fro") / np.linalg.norm(X, ord="fro")
+            )
         else:
-            raise ValueError(f"Unknown metric: {metric}. Use 'frobenius', 'mae', 'mse', or 'relative'.")
+            raise ValueError(
+                f"Unknown metric: {metric}. Use 'frobenius', 'mae', 'mse', or 'relative'."
+            )
 
     def explained_variance(self, X: np.ndarray) -> float:
         """
@@ -328,7 +332,9 @@ class ArchetypalAnalysisEvaluator:
 
         return hull_metrics
 
-    def plot_convex_hull(self, feature_indices: list[int] | None = None, figsize: tuple[int, int] = (10, 8)) -> None:
+    def plot_convex_hull(
+        self, feature_indices: list[int] | None = None, figsize: tuple[int, int] = (10, 8)
+    ) -> None:
         """
         Plot the convex hull formed by archetypes in 2D or 3D.
 
@@ -345,7 +351,9 @@ class ArchetypalAnalysisEvaluator:
             feature_indices = [0, 1, 2] if archetypes.shape[1] >= 3 else [0, 1]
 
         if len(feature_indices) not in [2, 3]:
-            raise ValueError("feature_indices must contain 2 or 3 feature indices for 2D or 3D visualization")
+            raise ValueError(
+                "feature_indices must contain 2 or 3 feature indices for 2D or 3D visualization"
+            )
 
         selected_archetypes = archetypes[:, feature_indices]
 
@@ -527,7 +535,9 @@ class ArchetypalAnalysisEvaluator:
 
         # Rename columns if feature names provided
         if feature_names is not None and len(feature_names) == self.n_features:
-            importance_df = pd.DataFrame(importance_df.values, index=importance_df.index, columns=feature_names)
+            importance_df = pd.DataFrame(
+                importance_df.values, index=importance_df.index, columns=feature_names
+            )
 
         plt.figure(figsize=(12, 8))
         sns.heatmap(importance_df, cmap="viridis", annot=True)
@@ -537,7 +547,9 @@ class ArchetypalAnalysisEvaluator:
         plt.tight_layout()
         plt.show()
 
-    def plot_archetype_feature_comparison(self, top_n: int = 5, feature_names: list[str] | None = None) -> None:
+    def plot_archetype_feature_comparison(
+        self, top_n: int = 5, feature_names: list[str] | None = None
+    ) -> None:
         """
         Plot radar chart or bar chart comparing top N most important features for each archetype.
 
@@ -549,7 +561,9 @@ class ArchetypalAnalysisEvaluator:
 
         # Rename columns if feature names provided
         if feature_names is not None and len(feature_names) == self.n_features:
-            importance_df = pd.DataFrame(importance_df.values, index=importance_df.index, columns=feature_names)
+            importance_df = pd.DataFrame(
+                importance_df.values, index=importance_df.index, columns=feature_names
+            )
 
         # For each archetype, get the top N most important features
         plt.figure(figsize=(15, 4 * ((self.n_archetypes + 1) // 2)))
@@ -817,7 +831,9 @@ class BiarchetypalAnalysisEvaluator:
         elif metric == "mae":
             return float(np.mean(np.abs(X - X_reconstructed)))
         elif metric == "relative":
-            return float(np.linalg.norm(X - X_reconstructed, ord="fro") / np.linalg.norm(X, ord="fro"))
+            return float(
+                np.linalg.norm(X - X_reconstructed, ord="fro") / np.linalg.norm(X, ord="fro")
+            )
         else:
             raise ValueError(f"Unknown metric: {metric}")
 
@@ -908,19 +924,27 @@ class BiarchetypalAnalysisEvaluator:
             Dictionary of purity metrics
         """
         # Calculate purity for first set
-        archetype_counts_first = np.bincount(self.dominant_archetypes_first, minlength=self.n_archetypes_first)
+        archetype_counts_first = np.bincount(
+            self.dominant_archetypes_first, minlength=self.n_archetypes_first
+        )
         archetype_purity_first = archetype_counts_first / np.sum(archetype_counts_first)
 
         # Calculate purity for second set
-        archetype_counts_second = np.bincount(self.dominant_archetypes_second, minlength=self.n_archetypes_second)
+        archetype_counts_second = np.bincount(
+            self.dominant_archetypes_second, minlength=self.n_archetypes_second
+        )
         archetype_purity_second = archetype_counts_second / np.sum(archetype_counts_second)
 
         # Calculate overall metrics
         return {
             "archetype_purity_first": archetype_purity_first,
             "archetype_purity_second": archetype_purity_second,
-            "overall_purity_first": np.max(archetype_purity_first) if archetype_purity_first.size > 0 else 0,
-            "overall_purity_second": np.max(archetype_purity_second) if archetype_purity_second.size > 0 else 0,
+            "overall_purity_first": np.max(archetype_purity_first)
+            if archetype_purity_first.size > 0
+            else 0,
+            "overall_purity_second": np.max(archetype_purity_second)
+            if archetype_purity_second.size > 0
+            else 0,
             "purity_std_first": np.std(archetype_purity_first),
             "purity_std_second": np.std(archetype_purity_second),
         }
@@ -1033,12 +1057,22 @@ class BiarchetypalAnalysisEvaluator:
         print(f"   - Explained Variance: {results['reconstruction']['explained_variance']:.4f}")
 
         print("\n2. ARCHETYPE SEPARATION:")
-        print(f"   - Minimum Distance (First Set): {results['separation']['min_distance_first']:.4f}")
-        print(f"   - Maximum Distance (First Set): {results['separation']['max_distance_first']:.4f}")
+        print(
+            f"   - Minimum Distance (First Set): {results['separation']['min_distance_first']:.4f}"
+        )
+        print(
+            f"   - Maximum Distance (First Set): {results['separation']['max_distance_first']:.4f}"
+        )
         print(f"   - Mean Distance (First Set): {results['separation']['mean_distance_first']:.4f}")
-        print(f"   - Minimum Distance (Second Set): {results['separation']['min_distance_second']:.4f}")
-        print(f"   - Maximum Distance (Second Set): {results['separation']['max_distance_second']:.4f}")
-        print(f"   - Mean Distance (Second Set): {results['separation']['mean_distance_second']:.4f}")
+        print(
+            f"   - Minimum Distance (Second Set): {results['separation']['min_distance_second']:.4f}"
+        )
+        print(
+            f"   - Maximum Distance (Second Set): {results['separation']['max_distance_second']:.4f}"
+        )
+        print(
+            f"   - Mean Distance (Second Set): {results['separation']['mean_distance_second']:.4f}"
+        )
 
         print("\n3. DOMINANT ARCHETYPE PURITY:")
         print(f"   - Overall Purity (First Set): {results['purity']['overall_purity_first']:.4f}")
@@ -1058,7 +1092,9 @@ class BiarchetypalAnalysisEvaluator:
             print("   - Clustering metrics not available (insufficient data)")
 
         print("\n5. WEIGHT DIVERSITY:")
-        print(f"   - Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}")
+        print(
+            f"   - Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}"
+        )
         print(
             f"   - Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}"
         )
@@ -1097,5 +1133,9 @@ class BiarchetypalAnalysisEvaluator:
         print(f"Overall Purity (Second Set): {results['purity']['overall_purity_second']:.4f}")
 
         print("\n--- Weight Diversity Metrics ---")
-        print(f"Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}")
-        print(f"Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}")
+        print(
+            f"Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}"
+        )
+        print(
+            f"Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}"
+        )

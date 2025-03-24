@@ -1,6 +1,7 @@
 """Improved Archetypal Analysis model using JAX."""
 
 from functools import partial
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -50,10 +51,18 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 - "kmeans" or "kmeans++": Use k-means++ initialization
             **kwargs: Additional keyword arguments
                 - early_stopping_patience: Number of iterations to wait before stopping if no improvement
-                - verbose_level: Level of verbosity (0, 1, 2)
-                    - 0: No verbose
-                    - 1: Basic verbose
-                    - 2: Detailed verbose
+                - verbose_level: Level of verbosity (0, 1, 2, 3, 4)
+                    - 0: Critical verbose
+                    - 1: Error verbose
+                    - 2: Warning verbose
+                    - 3: Info verbose
+                    - 4: Debug verbose
+                - logger_level: Level of verbosity (0, 1, 2, 3, 4)
+                    - 0: Debug verbose
+                    - 1: Info verbose
+                    - 2: Warning verbose
+                    - 3: Error verbose
+                    - 4: Critical verbose
         """
         super().__init__(
             n_archetypes=n_archetypes,
@@ -64,15 +73,46 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         )
 
         # Initialize class-specific logger
-        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        if isinstance(kwargs.get("logger_level"), str) and kwargs.get("logger_level") is not None:
+            logger_level = kwargs["logger_level"].upper()
+        elif isinstance(kwargs.get("logger_level"), int) and kwargs.get("logger_level") is not None:
+            logger_level = {
+                0: "DEBUG",
+                1: "INFO",
+                2: "WARNING",
+                3: "ERROR",
+                4: "CRITICAL",
+            }[kwargs["logger_level"]]
+        elif "logger_level" not in kwargs and "verbose_level" in kwargs and kwargs.get("verbose_level") is not None:
+            logger_level = {
+                4: "DEBUG",
+                3: "INFO",
+                2: "WARNING",
+                1: "ERROR",
+                0: "CRITICAL",
+            }[kwargs["verbose_level"]]
+        else:
+            logger_level = "ERROR"
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}", level=logger_level)
         self.logger.info(
             get_message(
                 "init",
                 "model_init",
                 model_name=self.__class__.__name__,
                 n_archetypes=n_archetypes,
+                max_iter=max_iter,
+                tol=tol,
+                random_seed=random_seed,
+                learning_rate=learning_rate,
+                lambda_reg=lambda_reg,
+                normalize=normalize,
+                projection_method=projection_method,
+                projection_alpha=projection_alpha,
+                archetype_init_method=archetype_init_method,
             )
         )
+
+        self.rng_key = jax.random.key(random_seed)
 
         self.n_archetypes = n_archetypes
         self.max_iter = max_iter
@@ -88,9 +128,6 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         self.archetype_init_method = archetype_init_method
 
         self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
-        self.verbose_level = kwargs.get("verbose_level", 1)
-
-        self.rng_key = jax.random.key(random_seed)
 
     def transform(
         self,
@@ -117,13 +154,16 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         # Scale input data
         X_np = X.values if hasattr(X, "values") else X
+        X_jax = jnp.array(X_np, dtype=jnp.float32)
         if self.normalize:
-            X_scaled = (
-                (X_np - self.X_mean) / self.X_std if self.X_mean is not None and self.X_std is not None else X_np.copy()
+            X_scaled = jnp.asarray(
+                (X_jax - self.X_mean) / self.X_std
+                if self.X_mean is not None and self.X_std is not None
+                else X_np.copy()
             )
             self.logger.info(get_message("data", "normalization", mean=self.X_mean, std=self.X_std))
         else:
-            X_scaled = X_np.copy()
+            X_scaled = X_jax.copy()
 
         # Adaptive method selection based on dataset size
         if method == "adaptive":
@@ -137,31 +177,28 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         # Method selection
         self.logger.info(get_message("data", "transformation", method=method))
-        if method == "lbfgs":
-            return self._transform_with_lbfgs(X_scaled, max_iter=max_iter, tol=tol)
-        elif method == "sgd":
-            return self._transform_with_sgd(X_scaled, max_iter=max_iter, tol=tol)
-        elif method == "adam":
-            return self._transform_with_adam(X_scaled, max_iter=max_iter, tol=tol)
-        else:
-            return self._transform_with_adam(X_scaled, max_iter=max_iter, tol=tol)
+        transform_fn = {
+            "lbfgs": self._transform_with_lbfgs,
+            "sgd": self._transform_with_sgd,
+            "adam": self._transform_with_adam,
+            "default": self._transform_with_adam,
+        }.get(method, self._transform_with_adam)
 
-    def _transform_with_lbfgs(self, X: np.ndarray, max_iter: int = 50, tol: float = 1e-5) -> np.ndarray:
+        weights = transform_fn(X_jax=X_scaled, max_iter=max_iter, tol=tol)
+
+        return np.asarray(weights)
+
+    def _transform_with_lbfgs(self, X_jax: jnp.ndarray, max_iter: int = 50, tol: float = 1e-5) -> np.ndarray:
         """Transform new data using improved L-BFGS optimization.
 
         Args:
-            X: Data matrix
+            X_jax: Data matrix of shape (n_samples, n_features)
             max_iter: Maximum number of iterations
             tol: Convergence tolerance
 
         Returns:
-            Weight matrix
+            Weight matrix of shape (n_samples, n_archetypes)
         """
-        if self.archetypes is None:
-            raise ValueError("Model must be fitted before transform")
-
-        X_jax = jnp.array(X, dtype=jnp.float32)
-
         if self.normalize:
             archetypes_scaled = (
                 (self.archetypes - self.X_mean) / self.X_std
@@ -227,12 +264,19 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             weights.append(np.array(batch_weights))
 
         weights_array = np.vstack(weights) if len(weights) > 1 else weights[0]
-        return weights_array
+        return np.asarray(weights_array)
 
-    def _transform_with_adam(self, X: np.ndarray, max_iter: int = 50, tol: float = 1e-5) -> np.ndarray:
-        """Transform using Adam optimizer with early stopping."""
-        X_jax = jnp.array(X, dtype=jnp.float32)
+    def _transform_with_adam(self, X_jax: jnp.ndarray, max_iter: int = 50, tol: float = 1e-5) -> np.ndarray:
+        """Transform using Adam optimizer with early stopping.
 
+        Args:
+            X_jax: Data matrix of shape (n_samples, n_features)
+            max_iter: Maximum number of iterations
+            tol: Convergence tolerance
+
+        Returns:
+            Weight matrix of shape (n_samples, n_archetypes)
+        """
         if self.normalize:
             archetypes_scaled = (
                 (self.archetypes - self.X_mean) / self.X_std
@@ -298,12 +342,19 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             weights.append(np.array(batch_weights))
 
         weights_array = np.vstack(weights) if len(weights) > 1 else weights[0]
-        return weights_array
+        return np.asarray(weights_array)
 
-    def _transform_with_sgd(self, X: np.ndarray, max_iter: int = 100, tol: float = 1e-5) -> np.ndarray:
-        """Transform using improved SGD with adaptive learning rate and convergence criteria."""
-        X_jax = jnp.array(X, dtype=jnp.float32)
+    def _transform_with_sgd(self, X_jax: jnp.ndarray, max_iter: int = 100, tol: float = 1e-5) -> np.ndarray:
+        """Transform using improved SGD with adaptive learning rate and convergence criteria.
 
+        Args:
+            X_jax: Data matrix of shape (n_samples, n_features)
+            max_iter: Maximum number of iterations
+            tol: Convergence tolerance
+
+        Returns:
+            Weight matrix of shape (n_samples, n_archetypes)
+        """
         if self.normalize:
             archetypes_scaled = (
                 (self.archetypes - self.X_mean) / self.X_std
@@ -371,10 +422,19 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             weights.append(np.array(batch_weights))
 
         weights_array = np.vstack(weights) if len(weights) > 1 else weights[0]
-        return weights_array
+        return np.asarray(weights_array)
 
-    def directional_init(self, X_jax, n_samples, n_features):
-        """Generate directions using points that are evenly distributed on a sphere."""
+    def directional_init(self, X_jax: jnp.ndarray, n_samples: int, n_features: int) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Generate directions using points that are evenly distributed on a sphere.
+
+        Args:
+            X_jax: Data matrix of shape (n_samples, n_features)
+            n_samples: Number of samples
+            n_features: Number of features
+
+        Returns:
+            Archetypes and archetype indices
+        """
         centroid = jnp.mean(X_jax, axis=0)
 
         # Special handling for low dimensions (2D and 3D)
@@ -459,7 +519,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         return archetypes, jnp.zeros(self.n_archetypes, dtype=jnp.int32)
 
-    def qhull_init(self, X_jax, n_samples, n_features):
+    def qhull_init(self, X_jax: jnp.ndarray, n_samples: int, n_features: int) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Initialize archetypes using convex hull vertices via QHull algorithm."""
         # Convert to numpy for scipy compatibility
         X_np = np.array(X_jax)
@@ -473,7 +533,11 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         except Exception as e:
             self.logger.warning(
                 get_message(
-                    "warning", "initialization_failed", strategy="QHull", error_msg=str(e), fallback="k-means++"
+                    "warning",
+                    "initialization_failed",
+                    strategy="QHull",
+                    error_msg=str(e),
+                    fallback="k-means++",
                 )
             )
             return self.kmeans_pp_init(X_jax, n_samples, n_features)
@@ -527,8 +591,17 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         return archetypes, jnp.array(selected_vertices)
 
-    def kmeans_pp_init(self, X_jax, n_samples, n_features):
-        """More efficient k-means++ style initialization using JAX."""
+    def kmeans_pp_init(self, X_jax: jnp.ndarray, n_samples: int, n_features: int) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """More efficient k-means++ style initialization using JAX.
+
+        Args:
+            X_jax: Data matrix of shape (n_samples, n_features)
+            n_samples: Number of samples
+            n_features: Number of features
+
+        Returns:
+            Archetypes and archetype indices
+        """
         # Randomly select the first center
         self.rng_key, subkey = jax.random.split(self.rng_key)
         first_idx = jax.random.randint(subkey, (), 0, n_samples)
@@ -584,8 +657,10 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         """
 
         @partial(jax.jit, static_argnums=(3))
-        def update_step(params, opt_state, X, iteration):
-            """Execute a single optimization step with mixed precision."""
+        def update_step(
+            params: dict[str, jnp.ndarray], opt_state: optax.OptState, X: jnp.ndarray, iteration: int
+        ) -> tuple[dict[str, jnp.ndarray], optax.OptState, jnp.ndarray]:
+            """Execute a single optimization step."""
 
             def loss_fn(params):
                 return self.loss_function(params["archetypes"], params["weights"], X_f32)
@@ -604,19 +679,32 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             # Alternating optimization: periodically use direct archetype update instead of gradient
             # This helps break out of local minima and improves convergence characteristics
-            use_direct_update = jnp.mod(iteration, 15) == 0  # Every 15 iterations
+            direct_update_condition = jnp.mod(iteration, 15) == 0
 
-            def apply_direct_update():
-                """Apply direct algebraic update to archetypes."""
-                archetypes_dir = self.update_archetypes(new_params["archetypes"], new_params["weights"], X_f32)
-                # Blend with gradient-based update to maintain stability
-                blend = 0.2  # 20% direct update, 80% gradient update
-                return blend * archetypes_dir + (1 - blend) * new_params["archetypes"]
+            # Dictionary-based dispatch for projection method selection
+            projection_method_fn = {
+                "cbap": self.project_archetypes,
+                "default": self.project_archetypes,
+                "convex_hull": self.project_archetypes_convex_hull,
+                "knn": self.project_archetypes_knn,
+            }
 
-            # Apply direct update conditionally
-            new_params["archetypes"] = jax.lax.cond(
-                use_direct_update, lambda: apply_direct_update(), lambda: new_params["archetypes"]
-            )
+            # Use lax.cond for conditional logic
+            def apply_direct_update(_):
+                return self.update_archetypes(new_params["archetypes"], new_params["weights"], X_f32)
+
+            # Use lax.cond for conditional logic
+            def apply_projection(_):
+                if self.projection_method in projection_method_fn:
+                    # Apply selected projection method
+                    return projection_method_fn[self.projection_method](new_params["archetypes"], X_f32)
+                else:
+                    # Default to standard projection
+                    return self.project_archetypes(new_params["archetypes"], X_f32)
+
+            # Use lax.cond for conditional logic
+            projected = jax.lax.cond(direct_update_condition, apply_direct_update, apply_projection, operand=None)
+            new_params["archetypes"] = projected
 
             # Store pre-projection archetypes
             pre_projection_archetypes = new_params["archetypes"]
@@ -624,17 +712,21 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             # Intermittent projection: only project archetypes every N iterations
             # This allows optimization to make progress between projections
-            do_projection = jnp.mod(iteration, 10) == 0
+            do_projection_condition = jnp.mod(iteration, 10) == 0
+
+            # Dictionary-based dispatch for projection method selection in project_archetypes
+            projection_method_dict = {
+                "cbap": self.project_archetypes,
+                "default": self.project_archetypes,
+                "convex_hull": self.project_archetypes_convex_hull,
+                "knn": self.project_archetypes_knn,
+            }
 
             # Conditional projection function
-            def project_archetypes():
-                # Select appropriate projection method
-                if self.projection_method == "cbap" or self.projection_method == "default":
-                    projected = self.project_archetypes(new_params["archetypes"], X_f32)
-                elif self.projection_method == "convex_hull":
-                    projected = self.project_archetypes_convex_hull(new_params["archetypes"], X_f32)
-                else:
-                    projected = self.project_archetypes_knn(new_params["archetypes"], X_f32)
+            def apply_projection_method(_):
+                # Select appropriate projection method using dictionary
+                project_fn = projection_method_dict.get(self.projection_method, self.project_archetypes)
+                projected = project_fn(new_params["archetypes"], X_f32)
 
                 # Calculate post-projection loss
                 post_projection_loss = self.loss_function(projected, new_params["weights"], X_f32)
@@ -658,9 +750,12 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 # Blend original and projected archetypes
                 return blend_factor * projected + (1 - blend_factor) * pre_projection_archetypes
 
-            # Only apply projection on designated iterations
+            def keep_original(_):
+                return pre_projection_archetypes
+
+            # Only apply projection on designated iterations using lax.cond
             new_params["archetypes"] = jax.lax.cond(
-                do_projection, lambda: project_archetypes(), lambda: pre_projection_archetypes
+                do_projection_condition, apply_projection_method, keep_original, operand=None
             )
 
             # Ensure consistent data types
@@ -688,7 +783,13 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         X_jax = jnp.array(X_scaled, dtype=jnp.float32)
         n_samples, n_features = X_jax.shape
         self.logger.info(
-            get_message("data", "data_shape", shape=X_jax.shape, min=float(jnp.min(X_jax)), max=float(jnp.max(X_jax)))
+            get_message(
+                "data",
+                "data_shape",
+                shape=X_jax.shape,
+                min=float(jnp.min(X_jax)),
+                max=float(jnp.max(X_jax)),
+            )
         )
 
         # Initialize weights (more stable initialization)
@@ -703,21 +804,24 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         weights_init = self.project_weights(weights_init)
 
         # archetype initialization
-        if self.archetype_init_method == "directional" or self.archetype_init_method == "direction":
-            archetypes_init, _ = self.directional_init(X_jax, n_samples, n_features)
-        elif self.archetype_init_method == "qhull" or self.archetype_init_method == "convex_hull":
-            archetypes_init, _ = self.qhull_init(X_jax, n_samples, n_features)
-        else:
-            archetypes_init, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
+        archetype_init_fn = {
+            "directional": self.directional_init,
+            "direction": self.directional_init,
+            "qhull": self.qhull_init,
+            "convex_hull": self.qhull_init,
+            "kmeans": self.kmeans_pp_init,
+            "kmeans++": self.kmeans_pp_init,
+        }.get(self.archetype_init_method, self.directional_init)
 
-        archetypes_init = archetypes_init.astype(jnp.float32)
+        archetypes, _ = archetype_init_fn(X_jax, n_samples, n_features)
+        archetypes = archetypes.astype(jnp.float32)
 
         # The rest is the same as the original fit method
         # Set up optimizer (Adam with reduced learning rate)
         optimizer: optax.GradientTransformation = optax.adam(learning_rate=self.learning_rate)
 
         # Initialize parameters
-        params = {"archetypes": archetypes_init, "weights": weights_init}
+        params = {"archetypes": archetypes, "weights": weights_init}
         opt_state = optimizer.init(params)
 
         # Optimization loop
@@ -729,16 +833,16 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         best_params = {k: v.copy() for k, v in params.items()}
         no_improvement_count = 0
         max_no_improvement = self.early_stopping_patience
-        prev_archetypes = archetypes_init.copy()
+        prev_archetypes = archetypes.copy()
 
         # Calculate initial loss for debugging
-        initial_loss = float(self.loss_function(archetypes_init, weights_init, X_jax))
+        initial_loss = float(self.loss_function(archetypes, weights_init, X_jax))
         self.logger.info(f"Initial loss: {initial_loss:.6f}")
 
-        for i in range(self.max_iter):
+        for it in range(self.max_iter):
             # Execute update step
             try:
-                params, opt_state, loss = update_step(params, opt_state, X_jax, i)
+                params, opt_state, loss = update_step(params, opt_state, X_jax, it)
                 loss_value = float(loss)
 
                 # Calculate the changes in archetypes
@@ -750,21 +854,34 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 avg_change = np.mean(change_norms)
                 max_change = np.max(change_norms)
 
-                if (i % 50 == 0 or max_change > 1.0) and self.verbose_level >= 2:
-                    self.logger.info(
-                        f"Iteration {i}, Archetype changes: Average={avg_change:.6f}, Maximum={max_change:.6f}"
+                if it % 50 == 0 or max_change > 1.0:
+                    self.logger.debug(
+                        get_message(
+                            "progress",
+                            "iteration_progress",
+                            current=it,
+                            total=self.max_iter,
+                            loss=loss_value,
+                            avg_change=avg_change,
+                            max_change=max_change,
+                        )
                     )
                     # Display indices of archetypes with significant changes
                     if max_change > 1.0:  # Set threshold
                         large_changes = np.where(change_norms > 1.0)[0]
                         if len(large_changes) > 0:
-                            self.logger.info(
-                                f"  Archetypes with significant changes: {large_changes}, Changes: {change_norms[large_changes]}"
+                            self.logger.debug(
+                                get_message(
+                                    "progress",
+                                    "large_changes",
+                                    archetypes=large_changes,
+                                    changes=change_norms[large_changes],
+                                )
                             )
 
                 # Check for NaN
                 if jnp.isnan(loss_value):
-                    self.logger.warning(get_message("warning", "nan_detected", iteration=i))
+                    self.logger.warning(get_message("warning", "nan_detected", iteration=it))
                     break
 
                 # Record loss
@@ -781,30 +898,41 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 # Implement early stopping with parameter restoration
                 if no_improvement_count >= max_no_improvement:
                     self.logger.info(
-                        get_message("progress", "early_stopping", iteration=i, patience=max_no_improvement)
+                        get_message("progress", "early_stopping", iteration=it, patience=max_no_improvement)
                     )
                     # Restore best parameters
                     params = best_params
                     break
 
                 # Periodically check if loss is increasing and restore best parameters if necessary
-                if i > 0 and i % 20 == 0 and loss_value > prev_loss * 1.05:
-                    self.logger.warning(get_message("warning", "loss_increase", previous=prev_loss, current=loss_value))
+                if it > 0 and it % 20 == 0 and loss_value > prev_loss * 1.05:
+                    self.logger.debug(get_message("warning", "loss_increase", previous=prev_loss, current=loss_value))
                     params = {k: v.copy() for k, v in best_params.items()}
                     # Re-initialize optimizer state
                     opt_state = optimizer.init(params)
 
                 # Check convergence
-                if i > 0 and abs(prev_loss - loss_value) < self.tol:
-                    self.logger.info(get_message("progress", "converged", iteration=i, tolerance=self.tol))
+                if it > 0 and abs(prev_loss - loss_value) < self.tol:
+                    self.logger.info(get_message("progress", "converged", iteration=it, tolerance=self.tol))
                     break
 
                 prev_loss = loss_value
 
                 # Show progress
-                if i % 50 == 0 and self.verbose_level >= 1:
+                if it % 50 == 0:
+                    # Calculate boundary weights percentage
+                    boundary_weights_pct = float(
+                        jnp.mean(jnp.sum(params["weights"] < 1e-5, axis=1) / self.n_archetypes)
+                    )
                     self.logger.info(
-                        get_message("progress", "iteration_progress", current=i, total=self.max_iter, loss=loss_value)
+                        get_message(
+                            "progress",
+                            "iteration_progress",
+                            current=it,
+                            total=self.max_iter,
+                            loss=loss_value,
+                            boundary_weights=f"{boundary_weights_pct:.2%}",
+                        )
                     )
 
             except Exception as e:
@@ -814,12 +942,14 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 break
 
         # Use best parameters for final model
-        if best_loss < loss_value:
+        if "loss_value" in locals() and best_loss < loss_value:
             self.logger.info(get_message("result", "final_loss", loss=best_loss, iterations=len(self.loss_history)))
             params = best_params
+        else:
+            self.logger.info(get_message("result", "final_loss", loss=best_loss, iterations=len(self.loss_history)))
 
         # Display the total change in archetypes
-        total_change = np.linalg.norm(np.array(params["archetypes"]) - np.array(archetypes_init), axis=1)
+        total_change = np.linalg.norm(np.array(params["archetypes"]) - np.array(archetypes), axis=1)
         self.logger.info("Total change in archetypes:")
         for i, change in enumerate(total_change):
             self.logger.info(f"  Archetype {i + 1}: {change:.6f}")
@@ -831,7 +961,12 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         if len(self.loss_history) > 0:
             self.logger.info(
-                get_message("result", "final_loss", loss=self.loss_history[-1], iterations=len(self.loss_history))
+                get_message(
+                    "result",
+                    "final_loss",
+                    loss=self.loss_history[-1],
+                    iterations=len(self.loss_history),
+                )
             )
         else:
             self.logger.warning(get_message("warning", "high_loss", loss=float("nan")))
@@ -839,11 +974,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         return self
 
     def fit_transform(
-        self,
-        X: np.ndarray,
-        y: np.ndarray | None = None,
-        normalize: bool = False,
-        **kwargs,
+        self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False, **kwargs
     ) -> np.ndarray:
         """
         Fit the model and return the transformed data.
@@ -862,7 +993,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         return np.asarray(model.transform(X_np, **kwargs))
 
     @partial(jax.jit, static_argnums=(0,))
-    def project_archetypes(self, archetypes, X) -> jnp.ndarray:
+    def project_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """JIT-compiled archetype projection that pushes archetypes towards the convex hull boundary.
 
         Instead of using k-NN which tends to pull archetypes inside the convex hull,
@@ -879,11 +1010,11 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
           changes and ensure optimization stability.
 
         Args:
-            archetypes: Current archetype matrix
-            X: Original data matrix
+            archetypes: Current archetype matrix of shape (n_archetypes, n_features)
+            X: Original data matrix of shape (n_samples, n_features)
 
         Returns:
-            Projected archetype matrix positioned closer to the convex hull boundary
+            Projected archetype matrix of shape (n_archetypes, n_features) positioned closer to the convex hull boundary
         """
         # Find the centroid of the data
         centroid = jnp.mean(X, axis=0)
@@ -935,7 +1066,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     # Alternative implementation that can be used for comparison or experimentation
     @partial(jax.jit, static_argnums=(0,))
-    def project_archetypes_convex_hull(self, archetypes, X) -> jnp.ndarray:
+    def project_archetypes_convex_hull(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Alternative archetype projection that uses convex combinations of extreme points.
 
         This method identifies potential extreme points and creates archetypes as
@@ -953,8 +1084,8 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         at the cost of slightly higher computational complexity.
 
         Args:
-            archetypes: Current archetype matrix
-            X: Original data matrix
+            archetypes: Current archetype matrix of shape (n_archetypes, n_features)
+            X: Original data matrix of shape (n_samples, n_features)
 
         Returns:
             Projected archetype matrix positioned on the convex hull boundary
@@ -1027,7 +1158,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     # Keep the original k-NN method for comparison
     @partial(jax.jit, static_argnums=(0,))
-    def project_archetypes_knn(self, archetypes, X) -> jnp.ndarray:
+    def project_archetypes_knn(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Original k-NN based archetype projection (kept for comparison).
 
         This method tends to pull archetypes inside the convex hull due to its
@@ -1059,17 +1190,26 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         return jnp.asarray(projected_archetypes)
 
     @partial(jax.jit, static_argnums=(0,))
-    def loss_function(self, archetypes, weights, X):
+    def loss_function(self, archetypes: jnp.ndarray, weights: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Customized loss function with reduced boundary incentive for ArchetypeTracker.
 
         This overrides the parent class loss function to provide more stability during tracking.
         Specifically, it reduces the boundary incentive weight to prevent archetypes from
         moving too rapidly in early iterations.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            weights: Weight matrix of shape (n_samples, n_archetypes)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Loss value as a scalar
         """
         archetypes_f32 = archetypes.astype(jnp.float32)
         weights_f32 = weights.astype(jnp.float32)
         X_f32 = X.astype(jnp.float32)
 
+        # Reconstruction error
         X_reconstructed = jnp.matmul(weights_f32, archetypes_f32)
         reconstruction_loss = jnp.mean(jnp.sum((X_f32 - X_reconstructed) ** 2, axis=1))
 
@@ -1085,15 +1225,22 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         # This matches the parent class boundary incentive level
         total_loss = reconstruction_loss + self.lambda_reg * entropy_reg - 0.001 * boundary_incentive
 
-        return total_loss.astype(jnp.float32)
+        return jnp.asarray(total_loss.astype(jnp.float32))
 
     @partial(jax.jit, static_argnums=(0,))
-    def _calculate_boundary_proximity(self, archetypes, X):
+    def _calculate_boundary_proximity(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Calculate a metric that rewards archetypes for being near convex hull boundary.
 
         A high value indicates archetypes are closer to the convex hull boundary,
         which is desirable for archetypal analysis. This serves as a regularization term
         that encourages archetypes to move toward extremal positions.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Boundary proximity score as a scalar
         """
         # Find the centroid of the data
         centroid = jnp.mean(X, axis=0)
@@ -1136,8 +1283,15 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         return jnp.mean(scores)
 
     @partial(jax.jit, static_argnums=(0,))
-    def project_weights(self, weights):
-        """JIT-compiled weight projection function."""
+    def project_weights(self, weights: jnp.ndarray) -> jnp.ndarray:
+        """JIT-compiled weight projection function.
+
+        Args:
+            weights: Weight matrix of shape (n_samples, n_archetypes)
+
+        Returns:
+            Projected weight matrix of shape (n_samples, n_archetypes)
+        """
         eps = 1e-10
         weights = jnp.maximum(eps, weights)
         sum_weights = jnp.sum(weights, axis=1, keepdims=True)
@@ -1145,12 +1299,20 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         return weights / sum_weights
 
     @partial(jax.jit, static_argnums=(0,))
-    def update_archetypes(self, archetypes, weights, X) -> jnp.ndarray:
+    def update_archetypes(self, archetypes: jnp.ndarray, weights: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Alternative archetype update strategy based on weighted reconstruction.
 
         This approach directly optimizes archetypes by computing the pseudo-inverse of weights,
         which often provides a more targeted and mathematically sound update than gradient
         descent for this specific subproblem.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            weights: Weight matrix of shape (n_samples, n_archetypes)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Updated archetype matrix of shape (n_archetypes, n_features)
         """
         # Calculate weight matrix pseudoinverse with improved numerical stability
         # Add a small regularization term to the weights to stabilize the computation
@@ -1192,7 +1354,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             # Scale factor to bring the archetype inside the convex hull if it's outside
             # Apply a small margin (0.99) to ensure it's strictly inside
             scale_factor = jnp.where(
-                archetype_projection > max_projection, 0.99 * max_projection / (archetype_projection + 1e-10), 1.0
+                archetype_projection > max_projection,
+                0.99 * max_projection / (archetype_projection + 1e-10),
+                1.0,
             )
 
             # Apply the scaling to the direction vector
@@ -1211,9 +1375,34 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
     def __init__(self, *args, **kwargs):
         """Initialize the ArchetypeTracker with parameters identical to those of ImprovedArchetypalAnalysis."""
         super().__init__(*args, **kwargs)
-        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        if isinstance(kwargs.get("logger_level"), str) and kwargs.get("logger_level") is not None:
+            logger_level = kwargs["logger_level"].lower()
+        elif isinstance(kwargs.get("logger_level"), int) and kwargs.get("logger_level") is not None:
+            logger_level = {
+                0: "DEBUG",
+                1: "INFO",
+                2: "WARNING",
+                3: "ERROR",
+                4: "CRITICAL",
+            }[kwargs["logger_level"]]
+        elif "logger_level" not in kwargs and "verbose_level" in kwargs and kwargs["verbose_level"] is not None:
+            logger_level = {
+                4: "DEBUG",
+                3: "INFO",
+                2: "WARNING",
+                1: "ERROR",
+                0: "CRITICAL",
+            }[kwargs["verbose_level"]]
+        else:
+            logger_level = "ERROR"
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}", level=logger_level)
         self.logger.info(
-            get_message("init", "model_init", model_name=self.__class__.__name__, n_archetypes=self.n_archetypes)
+            get_message(
+                "init",
+                "model_init",
+                model_name=self.__class__.__name__,
+                n_archetypes=self.n_archetypes,
+            )
         )
 
         self.archetype_history = []
@@ -1228,7 +1417,6 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         self.is_outside_history = []  # History of whether archetypes are outside the convex hull
 
         self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
-        self.verbose_level = kwargs.get("verbose_level", 1)
 
     def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "ArchetypeTracker":
         """Train the model while documenting the positions of archetypes at each iteration.
@@ -1260,15 +1448,17 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         self.current_iteration = 0
 
         # Initialize archetypes based on selected method
-        if self.archetype_init_method == "directional" or self.archetype_init_method == "direction":
-            archetypes, _ = self.directional_init(X_jax, n_samples, n_features)
-        elif self.archetype_init_method == "qhull" or self.archetype_init_method == "convex_hull":
-            archetypes, _ = self.qhull_init(X_jax, n_samples, n_features)
-        else:
-            archetypes, _ = self.kmeans_pp_init(X_jax, n_samples, n_features)
+        archetype_init_fn = {
+            "directional": self.directional_init,
+            "direction": self.directional_init,
+            "qhull": self.qhull_init,
+            "convex_hull": self.qhull_init,
+            "kmeans": self.kmeans_pp_init,
+            "kmeans++": self.kmeans_pp_init,
+        }.get(self.archetype_init_method, self.directional_init)
 
-        # Store initial archetypes
-        self.archetype_history = [np.array(archetypes)]
+        archetypes, _ = archetype_init_fn(X_jax, n_samples, n_features)
+        archetypes = archetypes.astype(jnp.float32)
 
         # Track initial boundary proximity
         initial_proximity = self._calculate_boundary_proximity(archetypes, X_jax)
@@ -1326,15 +1516,15 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
             avg_change = np.mean(change_norms)
             max_change = np.max(change_norms)
 
-            if (i % 50 == 0 or max_change > 1.0) and self.verbose_level >= 2:
-                self.logger.info(
+            if i % 50 == 0 or max_change > 1.0:
+                self.logger.debug(
                     f"Iteration {i}, Archetype changes: Average={avg_change:.6f}, Maximum={max_change:.6f}"
                 )
                 # Display indices of archetypes with significant changes
                 if max_change > 1.0:  # Set threshold
                     large_changes = np.where(change_norms > 1.0)[0]
                     if len(large_changes) > 0:
-                        self.logger.info(
+                        self.logger.debug(
                             f"  Archetypes with significant changes: {large_changes}, Changes: {change_norms[large_changes]}"
                         )
 
@@ -1430,7 +1620,7 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
 
             prev_loss = loss_value
 
-            if i % 50 == 0 and self.verbose_level >= 1:
+            if i % 50 == 0:
                 outside_count = np.sum(self.is_outside_history[-1])
                 self.logger.info(
                     f"Iteration {i}, Loss: {loss_value:.6f}, "
@@ -1464,11 +1654,19 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
 
         return self
 
-    def _calculate_weights(self, X, archetypes):
-        """Calculate optimal weights for given archetypes using JAX."""
+    def _calculate_weights(self, X: jnp.ndarray, archetypes: jnp.ndarray) -> jnp.ndarray:
+        """Calculate optimal weights for given archetypes using JAX.
+
+        Args:
+            X: Data matrix of shape (n_samples, n_features)
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+
+        Returns:
+            Weight matrix of shape (n_samples, n_archetypes)
+        """
 
         @jax.jit
-        def calculate_single_weight(x_sample, archetypes):
+        def calculate_single_weight(x_sample: jnp.ndarray, archetypes: jnp.ndarray) -> jnp.ndarray:
             # Initial weights
             w = jnp.ones(self.n_archetypes) / self.n_archetypes
 
@@ -1491,10 +1689,18 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
             return final_w
 
         # Parallelize weight calculation across all samples
-        return jax.vmap(calculate_single_weight, in_axes=(0, None))(X, archetypes)
+        return jnp.asarray(jax.vmap(calculate_single_weight, in_axes=(0, None))(X, archetypes))
 
-    def _check_archetypes_outside(self, archetypes, X):
-        """Check if archetypes are outside the convex hull."""
+    def _check_archetypes_outside(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> np.ndarray:
+        """Check if archetypes are outside the convex hull.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Boolean array of shape (n_archetypes,)
+        """
         centroid = jnp.mean(X, axis=0)
 
         def check_single_archetype(archetype):
@@ -1513,7 +1719,6 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
             # Calculate archetype projection
             max_projection = jnp.max(projections)
             archetype_projection = jnp.dot(archetype - centroid, normalized_direction)
-
             # Check if archetype is beyond the furthest data point
             return archetype_projection > max_projection
 
@@ -1521,15 +1726,30 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         is_outside = jax.vmap(check_single_archetype)(archetypes)
         return np.array(is_outside)
 
-    def _constrain_to_convex_hull_batch(self, archetypes, X):
-        """Ensure all archetypes are within the convex hull."""
+    def _constrain_to_convex_hull_batch(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
+        """Ensure all archetypes are within the convex hull.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Constrained archetype matrix of shape (n_archetypes, n_features)
+        """
         return jax.vmap(lambda arch: self._constrain_to_convex_hull(arch, X))(archetypes)
 
-    def _constrain_to_convex_hull(self, archetype, X):
+    def _constrain_to_convex_hull(self, archetype: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Constrain a single archetype to be within the convex hull.
 
         More conservative implementation than the parent class,
         keeping archetypes slightly inside the convex hull boundary.
+
+        Args:
+            archetype: Archetype matrix of shape (n_features,)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Constrained archetype matrix of shape (n_features,)
         """
         centroid = jnp.mean(X, axis=0)
 
@@ -1562,7 +1782,9 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         # Scale the offset from centroid
         return centroid + scale_factor * (archetype - centroid)
 
-    def visualize_movement(self, feature_indices=None, figsize=(12, 8), interval=1):
+    def visualize_movement(
+        self, feature_indices: list[int] | None = None, figsize=(12, 8), interval: int = 1
+    ) -> Any | None:
         """Visualize how archetypes moved during optimization.
 
         Args:
@@ -1670,12 +1892,19 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
 
         except ImportError:
             self.logger.error(
-                get_message("error", "computation_error", error_msg="Matplotlib library is required for visualization")
+                get_message(
+                    "error",
+                    "computation_error",
+                    error_msg="Matplotlib library is required for visualization",
+                )
             )
             return None
 
-    def visualize_boundary_proximity(self, figsize=(10, 5)):
+    def visualize_boundary_proximity(self, figsize=(10, 5)) -> Any | None:
         """Visualize how close archetypes stayed to the convex hull boundary.
+
+        Args:
+            figsize: Figure size.
 
         Returns:
             matplotlib figure
@@ -1706,44 +1935,26 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
 
         except ImportError:
             self.logger.error(
-                get_message("error", "computation_error", error_msg="Matplotlib library is required for visualization")
+                get_message(
+                    "error",
+                    "computation_error",
+                    error_msg="Matplotlib library is required for visualization",
+                )
             )
             return None
 
-    # @partial(jax.jit, static_argnums=(0,))
-    # def loss_function(self, archetypes, weights, X):
-    #     """Customized loss function with reduced boundary incentive for ArchetypeTracker.
-
-    #     This overrides the parent class loss function to provide more stability during tracking.
-    #     Specifically, it reduces the boundary incentive weight to prevent archetypes from
-    #     moving too rapidly in early iterations.
-    #     """
-    #     archetypes_f32 = archetypes.astype(jnp.float32)
-    #     weights_f32 = weights.astype(jnp.float32)
-    #     X_f32 = X.astype(jnp.float32)
-
-    #     X_reconstructed = jnp.matmul(weights_f32, archetypes_f32)
-    #     reconstruction_loss = jnp.mean(jnp.sum((X_f32 - X_reconstructed) ** 2, axis=1))
-
-    #     # Calculate entropy (higher values for uniform weights, lower for sparse weights)
-    #     entropy = -jnp.sum(weights_f32 * jnp.log(weights_f32 + 1e-10), axis=1)
-    #     entropy_reg = jnp.mean(entropy)
-
-    #     # Add incentive for archetypes to stay near convex hull boundary
-    #     # But use a much lower weight than the parent class
-    #     boundary_incentive = self._calculate_boundary_proximity(archetypes_f32, X_f32)
-
-    #     # We use a significantly reduced boundary incentive for tracking stability
-    #     # This matches the parent class boundary incentive level
-    #     total_loss = reconstruction_loss + self.lambda_reg * entropy_reg - 0.001 * boundary_incentive
-
-    #     return total_loss.astype(jnp.float32)
-
-    def project_archetypes_with_adaptive_strength(self, archetypes, X):
+    def project_archetypes_with_adaptive_strength(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """Modified projection function that adapts its strength based on the current iteration.
 
         In early iterations, the projection is very gentle to prevent large movements.
         As training progresses, it gradually increases to the normal projection strength.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Projected archetype matrix of shape (n_archetypes, n_features)
         """
         # Find the centroid of the data
         centroid = jnp.mean(X, axis=0)
@@ -1798,6 +2009,14 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         return jnp.asarray(projected_archetypes)
 
     @partial(jax.jit, static_argnums=(0,))
-    def project_archetypes(self, archetypes, X):
-        """Override parent class projection with adaptive version for tracking."""
+    def project_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
+        """Override parent class projection with adaptive version for tracking.
+
+        Args:
+            archetypes: Archetype matrix of shape (n_archetypes, n_features)
+            X: Data matrix of shape (n_samples, n_features)
+
+        Returns:
+            Projected archetype matrix of shape (n_archetypes, n_features)
+        """
         return self.project_archetypes_with_adaptive_strength(archetypes, X)

@@ -1,4 +1,29 @@
-"""GPU-accelerated Archetypal Analysis implementation using JAX."""
+"""
+ArchetypAX: GPU-accelerated Archetypal Analysis implementation using JAX.
+
+This package provides efficient implementations of various Archetypal Analysis algorithms
+leveraging JAX for GPU acceleration and automatic differentiation.
+
+Main Components:
+    models: Core model implementations for different types of archetypal analysis
+    tools: Utilities for evaluation, interpretation, and visualization
+    logger: Standardized logging system
+
+Basic Usage:
+    import archetypax as apx
+    import numpy as np
+
+    # Create data
+    data = np.random.rand(100, 10)
+
+    # Initialize and fit a model
+    model = apx.ArchetypalAnalysis(n_archetypes=5)
+    model.fit(data)
+
+    # Get archetypal representations
+    archetypes = model.get_archetypes()
+    coefficients = model.transform(data)
+"""
 
 __version__ = "0.1.0"
 
