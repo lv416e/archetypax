@@ -906,7 +906,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
                 # Periodically check if loss is increasing and restore best parameters if necessary
                 if it > 0 and it % 20 == 0 and loss_value > prev_loss * 1.05:
-                    self.logger.warning(get_message("warning", "loss_increase", previous=prev_loss, current=loss_value))
+                    self.logger.debug(get_message("warning", "loss_increase", previous=prev_loss, current=loss_value))
                     params = {k: v.copy() for k, v in best_params.items()}
                     # Re-initialize optimizer state
                     opt_state = optimizer.init(params)
@@ -920,6 +920,10 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
                 # Show progress
                 if it % 50 == 0:
+                    # Calculate boundary weights percentage
+                    boundary_weights_pct = float(
+                        jnp.mean(jnp.sum(params["weights"] < 1e-5, axis=1) / self.n_archetypes)
+                    )
                     self.logger.info(
                         get_message(
                             "progress",
@@ -927,6 +931,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                             current=it,
                             total=self.max_iter,
                             loss=loss_value,
+                            boundary_weights=f"{boundary_weights_pct:.2%}",
                         )
                     )
 

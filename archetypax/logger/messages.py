@@ -23,7 +23,7 @@ INIT_MESSAGES = {
 
 # Progress and operation messages
 PROGRESS_MESSAGES = {
-    "iteration_progress": "Iteration {current}/{total}: loss={loss:.6f}",
+    "iteration_progress": "Iteration {current}/{total}: loss={loss:.6f}, boundary_weights={boundary_weights}",
     "converged": "Convergence achieved at iteration {iteration} with tolerance {tolerance}",
     "early_stopping": "Early stopping triggered at iteration {iteration}. No improvement for {patience} iterations",
     "operation_complete": "Operation '{operation_name}' completed successfully in {elapsed_time:.4f} seconds",
