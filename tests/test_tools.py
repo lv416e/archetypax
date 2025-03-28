@@ -1,5 +1,6 @@
 """Unit tests for archetypax tools."""
 
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -10,6 +11,7 @@ from archetypax.models.archetypes import ImprovedArchetypalAnalysis
 from archetypax.models.base import ArchetypalAnalysis
 from archetypax.tools.evaluation import ArchetypalAnalysisEvaluator
 from archetypax.tools.interpret import ArchetypalAnalysisInterpreter
+from archetypax.tools.tracker import ArchetypeTracker
 from archetypax.tools.visualization import ArchetypalAnalysisVisualizer
 
 
@@ -21,11 +23,143 @@ def sample_data():
 
 
 @pytest.fixture
+def small_sample_data():
+    """Generate smaller synthetic data for faster tests."""
+    X, _ = make_blobs(n_samples=10, n_features=2, centers=2, random_state=42, cluster_std=1.5)
+    return X
+
+
+@pytest.fixture
 def fitted_model(sample_data):
     """Create a pre-fitted model for testing tool functionality."""
     model = ArchetypalAnalysis(n_archetypes=3, max_iter=20)
     model.fit(sample_data)
     return model
+
+
+class TestArchetypeTracker:
+    """Test suite for the ArchetypeTracker class."""
+
+    def test_initialization(self):
+        """Verify proper initialization of tracker parameters."""
+        tracker = ArchetypeTracker(n_archetypes=3)
+
+        # Check base class parameters are properly initialized
+        assert tracker.n_archetypes == 3
+        assert tracker.max_iter == 500
+        assert tracker.tol == 1e-6
+        assert tracker.archetypes is None
+        assert tracker.weights is None
+
+        # Check tracker-specific attributes
+        assert tracker.archetype_history == []
+        assert tracker.boundary_proximity_history == []
+        assert tracker.is_outside_history == []
+        assert tracker.archetype_grad_scale == 1.0
+        assert tracker.noise_scale == 0.02
+        assert tracker.exploration_noise_scale == 0.05
+
+    def test_fit(self, small_sample_data):
+        """Test that fit method properly records archetype movement history."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
+        tracker.fit(small_sample_data)
+
+        # Check that base functionality works
+        assert tracker.archetypes is not None
+        assert tracker.weights is not None
+        assert tracker.archetypes.shape == (2, 2)
+        assert tracker.weights.shape == (10, 2)
+
+        # Check tracker-specific outputs
+        assert len(tracker.archetype_history) > 0
+        assert len(tracker.boundary_proximity_history) > 0
+        assert len(tracker.is_outside_history) > 0
+
+        # Check history shape consistency
+        assert tracker.archetype_history[0].shape == (2, 2)
+        assert len(tracker.boundary_proximity_history) == len(tracker.is_outside_history)
+        assert isinstance(tracker.boundary_proximity_history[0], float)
+
+        # Test loss history
+        assert len(tracker.loss_history) > 0
+        assert all(isinstance(loss, float) for loss in tracker.loss_history)
+
+    def test_transform(self, small_sample_data):
+        """Test transform still works properly in the tracker."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
+        tracker.fit(small_sample_data)
+
+        # Test transform with same data
+        weights = tracker.transform(small_sample_data, max_iter=5)
+        assert weights.shape == (10, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+        # Test with new data
+        new_data = np.random.rand(5, 2)
+        weights = tracker.transform(new_data, max_iter=5)
+        assert weights.shape == (5, 2)
+        assert np.allclose(np.sum(weights, axis=1), 1.0)
+
+    def test_check_archetypes_outside(self, small_sample_data):
+        """Test method for checking if archetypes are outside convex hull."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
+        tracker.fit(small_sample_data)
+
+        # Get test data in JAX format
+        X_jax = jnp.array(small_sample_data)
+        archetypes_jax = jnp.array(tracker.archetypes)
+
+        # Check if archetypes are outside convex hull
+        is_outside = tracker._check_archetypes_outside(archetypes_jax, X_jax)
+
+        # Verify result shape and type
+        assert is_outside.shape == (2,)
+        assert is_outside.dtype == bool
+
+    def test_constrain_to_convex_hull(self, small_sample_data):
+        """Test method for constraining archetypes to convex hull."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
+        tracker.fit(small_sample_data)
+
+        # Get test data in JAX format
+        X_jax = jnp.array(small_sample_data)
+        archetypes_jax = jnp.array(tracker.archetypes)
+
+        # Constrain archetypes to convex hull
+        constrained = tracker._constrain_to_convex_hull_batch(archetypes_jax, X_jax)
+
+        # Verify result shape
+        assert constrained.shape == (2, 2)
+
+        # Check if any archetypes are outside after constraint
+        is_outside = tracker._check_archetypes_outside(constrained, X_jax)
+        assert not np.any(is_outside)  # None should be outside after constraint
+
+    @pytest.mark.skipif(True, reason="Matplotlib visualization test skipped by default")
+    def test_visualize_movement(self, small_sample_data):
+        """Test visualization method for archetype movement."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
+        tracker.fit(small_sample_data)
+
+        # Try to visualize movement with default parameters
+        fig = tracker.visualize_movement()
+
+        # If matplotlib is available, this should return a figure
+        if fig is not None:
+            assert str(type(fig)).find("matplotlib.figure.Figure") != -1
+
+    @pytest.mark.skipif(True, reason="Matplotlib visualization test skipped by default")
+    def test_visualize_boundary_proximity(self, small_sample_data):
+        """Test visualization method for boundary proximity."""
+        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
+        tracker.fit(small_sample_data)
+
+        # Try to visualize boundary proximity
+        fig = tracker.visualize_boundary_proximity()
+
+        # If matplotlib is available, this should return a figure
+        if fig is not None:
+            assert str(type(fig)).find("matplotlib.figure.Figure") != -1
 
 
 class TestArchetypalAnalysisEvaluator:
@@ -568,14 +702,10 @@ class TestBiarchetypalAnalysisVisualizer:
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
         BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(fitted_biarchetypal_model)
-        BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(
-            fitted_biarchetypal_model, n_samples=20
-        )
+        BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(fitted_biarchetypal_model, n_samples=20)
 
     @pytest.mark.slow
-    def test_plot_dual_archetypes_2d_with_2d_data(
-        self, biarchetypal_sample_data_2d, fitted_biarchetypal_model_2d
-    ):
+    def test_plot_dual_archetypes_2d_with_2d_data(self, biarchetypal_sample_data_2d, fitted_biarchetypal_model_2d):
         """Verify 2D dual archetype visualization."""
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
@@ -606,20 +736,14 @@ class TestBiarchetypalAnalysisVisualizer:
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
         BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(fitted_biarchetypal_model_2d)
-        BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(
-            fitted_biarchetypal_model_2d, n_samples=20
-        )
+        BiarchetypalAnalysisVisualizer.plot_dual_membership_heatmap(fitted_biarchetypal_model_2d, n_samples=20)
 
     @pytest.mark.slow
-    def test_plot_mixture_effect_with_2d_data(
-        self, biarchetypal_sample_data_2d, fitted_biarchetypal_model_2d
-    ):
+    def test_plot_mixture_effect_with_2d_data(self, biarchetypal_sample_data_2d, fitted_biarchetypal_model_2d):
         """Verify mixture effect visualization."""
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
-        BiarchetypalAnalysisVisualizer.plot_mixture_effect(
-            fitted_biarchetypal_model_2d, biarchetypal_sample_data_2d
-        )
+        BiarchetypalAnalysisVisualizer.plot_mixture_effect(fitted_biarchetypal_model_2d, biarchetypal_sample_data_2d)
         BiarchetypalAnalysisVisualizer.plot_mixture_effect(
             fitted_biarchetypal_model_2d, biarchetypal_sample_data_2d, mixture_steps=3
         )
@@ -630,9 +754,7 @@ class TestBiarchetypalAnalysisVisualizer:
         from archetypax.tools.visualization import BiarchetypalAnalysisVisualizer
 
         BiarchetypalAnalysisVisualizer.plot_dual_simplex_2d(fitted_biarchetypal_model_2d_3arch)
-        BiarchetypalAnalysisVisualizer.plot_dual_simplex_2d(
-            fitted_biarchetypal_model_2d_3arch, n_samples=100
-        )
+        BiarchetypalAnalysisVisualizer.plot_dual_simplex_2d(fitted_biarchetypal_model_2d_3arch, n_samples=100)
 
 
 @pytest.fixture
@@ -673,9 +795,7 @@ class TestArchetypalAnalysisVisualizer:
         """Verify 2D archetype visualization."""
         feature_names = [f"Feature {i}" for i in range(sample_data_2d.shape[1])]
 
-        ArchetypalAnalysisVisualizer.plot_archetypes_2d(
-            fitted_model_2d, sample_data_2d, feature_names
-        )
+        ArchetypalAnalysisVisualizer.plot_archetypes_2d(fitted_model_2d, sample_data_2d, feature_names)
         ArchetypalAnalysisVisualizer.plot_archetypes_2d(fitted_model_2d, sample_data_2d)
 
     @pytest.mark.slow
@@ -814,9 +934,7 @@ class TestBiarchetypalAnalysisInterpreter:
         interpreter.evaluate_all_models(biarchetypal_sample_data)
 
         # Test different methods for suggesting optimal biarchetypes
-        optimal_interpretability = interpreter.suggest_optimal_biarchetypes(
-            method="interpretability"
-        )
+        optimal_interpretability = interpreter.suggest_optimal_biarchetypes(method="interpretability")
         assert isinstance(optimal_interpretability, tuple)
         assert len(optimal_interpretability) == 2
 

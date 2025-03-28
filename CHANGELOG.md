@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 ### Changed
+- Relocated `ArchetypeTracker` class from `models/archetypes.py` to `tools/tracker.py` for improved code organization while maintaining backward compatibility
 ### Fixed
 
 ## [0.1.0] - 2025/03/21
