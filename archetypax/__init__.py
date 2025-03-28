@@ -36,12 +36,13 @@ from . import logger, models, tools
 from .logger import get_logger, get_message
 
 # Direct imports for simplified usage
-from .models.archetypes import ArchetypeTracker, ImprovedArchetypalAnalysis
+from .models.archetypes import ImprovedArchetypalAnalysis
 from .models.base import ArchetypalAnalysis
 from .models.biarchetypes import BiarchetypalAnalysis
 from .models.sparse_archetypes import SparseArchetypalAnalysis
 from .tools.evaluation import ArchetypalAnalysisEvaluator
 from .tools.interpret import ArchetypalAnalysisInterpreter
+from .tools.tracker import ArchetypeTracker
 from .tools.visualization import ArchetypalAnalysisVisualizer
 
 # Register legacy import paths - with type annotations for mypy
@@ -57,6 +58,8 @@ if not isinstance(tools.visualization, types.ModuleType):
     tools.visualization = types.ModuleType("tools.visualization")  # type: ignore
 if not isinstance(tools.interpret, types.ModuleType):
     tools.interpret = types.ModuleType("tools.interpret")  # type: ignore
+if not isinstance(tools.tracker, types.ModuleType):
+    tools.tracker = types.ModuleType("tools.tracker")  # type: ignore
 
 sys.modules["archetypax.base"] = models.base
 sys.modules["archetypax.archetypes"] = models.archetypes
@@ -64,3 +67,4 @@ sys.modules["archetypax.biarchetypes"] = models.biarchetypes
 sys.modules["archetypax.evaluation"] = tools.evaluation
 sys.modules["archetypax.visualization"] = tools.visualization
 sys.modules["archetypax.interpret"] = tools.interpret
+sys.modules["archetypax.tracker"] = tools.tracker

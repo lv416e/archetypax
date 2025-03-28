@@ -27,9 +27,10 @@ import sys
 import types
 from typing import Any
 
-from . import evaluation, interpret, visualization
+from . import evaluation, interpret, tracker, visualization
 
 # Expose key classes at the tools level
 from .evaluation import ArchetypalAnalysisEvaluator
 from .interpret import ArchetypalAnalysisInterpreter
+from .tracker import ArchetypeTracker
 from .visualization import ArchetypalAnalysisVisualizer
