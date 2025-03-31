@@ -1,4 +1,18 @@
-"""Interpretability metrics for Archetypal Analysis."""
+"""Advanced tools for extracting meaningful insights from archetypal representations.
+
+This module provides specialized metrics and techniques for translating mathematical
+archetypal models into domain-relevant interpretations. These tools address the
+critical challenge of making abstract archetypal patterns understandable by:
+
+1. Quantifying interpretability characteristics of discovered archetypes
+2. Revealing feature-level insights about what each archetype represents
+3. Determining optimal archetype configurations for maximum meaningfulness
+4. Assessing stability and reliability of derived interpretations
+
+These capabilities are essential for bridging the gap between algorithmic discovery
+and practical application, enabling stakeholders to leverage archetypal analysis
+for meaningful decision-making, pattern discovery, and knowledge extraction.
+"""
 
 from typing import Any
 
@@ -13,26 +27,52 @@ from ..tools.evaluation import ArchetypalAnalysisEvaluator
 
 
 class ArchetypalAnalysisInterpreter:
-    """
-    Interpreter for Archetypal Analysis results, focusing on interpretability metrics.
+    """Advanced interpreter for extracting meaningful insights from archetypal models.
 
-    Provides quantitative measures for archetype interpretability and optimal number selection.
+    This class provides specialized metrics and visualization tools for translating
+    abstract mathematical archetypes into understandable, domain-relevant patterns.
+    Beyond basic evaluation, this interpreter focuses on:
+
+    - Quantifying interpretability characteristics of archetypes
+    - Determining optimal archetype configurations for maximum meaningfulness
+    - Assessing feature importance and pattern distinctiveness
+    - Measuring stability and consistency of discovered archetypes
+
+    These capabilities address the critical challenge of making archetypal analysis
+    results accessible and actionable for domain experts and decision-makers,
+    particularly in exploratory analysis and knowledge discovery applications.
     """
 
     def __init__(self, models_dict: dict[int, ArchetypalAnalysis] | None = None) -> None:
-        """
-        Initialize the interpreter.
+        """Initialize the interpreter with optional model collection.
+
+        This constructor can either create an empty interpreter for later model
+        addition or initialize with a pre-fitted collection of models with
+        different archetype counts. The latter enables comparative analysis
+        across model complexities for optimal configuration selection.
 
         Args:
-            models_dict: Optional dictionary of {n_archetypes: model} pairs
+            models_dict: Optional dictionary mapping archetype counts to fitted
+                        models for comparative interpretation
         """
         self.models_dict: dict[int, ArchetypalAnalysis] | None = models_dict or None
         self.results: dict[int, dict[str, Any]] | None = None
 
-    def add_model(
-        self, n_archetypes: int, model: ArchetypalAnalysis
-    ) -> "ArchetypalAnalysisInterpreter":
-        """Add a fitted model to the interpreter."""
+    def add_model(self, n_archetypes: int, model: ArchetypalAnalysis) -> "ArchetypalAnalysisInterpreter":
+        """Register a fitted archetypal model for interpretation.
+
+        This method builds the interpreter's model collection incrementally,
+        allowing comparative analysis across different archetype configurations.
+        Each model is validated to ensure it has been properly fitted before
+        inclusion in the comparative framework.
+
+        Args:
+            n_archetypes: Number of archetypes in the model (key for retrieval)
+            model: Fitted archetypal model to include in the analysis
+
+        Returns:
+            Self - for method chaining
+        """
         if model.archetypes is None or model.weights is None:
             raise ValueError("Model must be fitted before adding to interpreter")
 
@@ -43,14 +83,26 @@ class ArchetypalAnalysisInterpreter:
         return self
 
     def feature_distinctiveness(self, archetypes: np.ndarray) -> np.ndarray:
-        """
-        Calculate how distinctive each archetype is in terms of feature values.
+        """Quantify how uniquely each archetype represents specific feature patterns.
+
+        This interpretability metric measures how well each archetype captures unique
+        feature patterns not represented by other archetypes. High distinctiveness
+        indicates:
+
+        - The archetype represents a truly unique data pattern
+        - Features have meaningful peak values in this archetype
+        - The archetype makes a non-redundant contribution to the model
+        - Interpretation can focus on specific distinguishing characteristics
+
+        Low distinctiveness suggests potential redundancy or that the archetype
+        represents a subtle pattern variation rather than a fundamentally distinct type.
 
         Args:
             archetypes: Archetype matrix (n_archetypes, n_features)
 
         Returns:
-            Array of distinctiveness scores for each archetype
+            Array of distinctiveness scores for each archetype, where higher
+            values indicate more distinctive feature utilization
         """
         n_archetypes, n_features = archetypes.shape
         distinctiveness_scores = np.zeros(n_archetypes)
@@ -58,11 +110,7 @@ class ArchetypalAnalysisInterpreter:
         for i in range(n_archetypes):
             # Calculate the difference between this archetype's values and the maximum values of other archetypes
             other_archetypes = np.delete(archetypes, i, axis=0)
-            max_others = (
-                np.max(other_archetypes, axis=0)
-                if len(other_archetypes) > 0
-                else np.zeros(n_features)
-            )
+            max_others = np.max(other_archetypes, axis=0) if len(other_archetypes) > 0 else np.zeros(n_features)
             distinctiveness = archetypes[i] - max_others
 
             # Sum the positive differences (features that are particularly prominent in this archetype)
@@ -71,15 +119,29 @@ class ArchetypalAnalysisInterpreter:
         return distinctiveness_scores
 
     def sparsity_coefficient(self, archetypes: np.ndarray, percentile: float = 80) -> np.ndarray:
-        """
-        Calculate sparsity of each archetype's feature representation.
+        """Measure interpretability through feature utilization concentration.
+
+        This metric quantifies how selectively each archetype utilizes features,
+        based on the cognitive science principle that humans can most effectively
+        interpret patterns defined by a small number of prominent characteristics.
+        High sparsity indicates:
+
+        - The archetype focuses on a specific subset of features
+        - Interpretation can highlight a manageable number of key attributes
+        - The pattern has clear defining characteristics
+        - Domain experts can more easily understand and label the archetype
+
+        Low sparsity suggests a complex pattern utilizing many features, which
+        may be harder to interpret but potentially more faithful to complex phenomena.
 
         Args:
             archetypes: Archetype matrix (n_archetypes, n_features)
-            percentile: Percentile threshold for considering features as prominent
+            percentile: Threshold for considering features as prominent (higher
+                      values produce more selective feature identification)
 
         Returns:
-            Array of sparsity scores for each archetype (higher is more interpretable)
+            Array of sparsity scores for each archetype (higher values indicate
+            more focused feature utilization and better interpretability)
         """
         n_archetypes, n_features = archetypes.shape
         sparsity_scores = np.zeros(n_archetypes)
@@ -98,18 +160,28 @@ class ArchetypalAnalysisInterpreter:
         # Lower scores indicate higher sparsity (better interpretability)
         return 1 - sparsity_scores
 
-    def cluster_purity(
-        self, weights: np.ndarray, threshold: float = 0.6
-    ) -> tuple[np.ndarray, float]:
-        """
-        Calculate purity of each archetype's associated data points.
+    def cluster_purity(self, weights: np.ndarray, threshold: float = 0.6) -> tuple[np.ndarray, float]:
+        """Assess archetype interpretability through assignment clarity.
+
+        This metric evaluates how cleanly each archetype captures a distinct
+        subset of data points, based on the principle that interpretable archetypes
+        should represent clear, distinguishable patterns. High purity indicates:
+
+        - The archetype represents a coherent, well-defined pattern
+        - Data points can be meaningfully assigned to specific archetypes
+        - The model has discovered genuine structure rather than arbitrary positions
+        - Users can confidently interpret new samples through dominant archetypes
+
+        Low purity suggests archetypes may be capturing overlapping patterns or
+        that the underlying data lacks clear archetypal structure.
 
         Args:
             weights: Weight matrix (n_samples, n_archetypes)
-            threshold: Threshold for considering an archetype as dominant
+            threshold: Minimum weight to consider an archetype dominant
 
         Returns:
-            Tuple of purity scores per archetype, average purity
+            Tuple containing: (1) purity scores for each archetype and
+            (2) average purity across all archetypes
         """
         n_samples, n_archetypes = weights.shape
         purity_scores = np.zeros(n_archetypes)
@@ -122,14 +194,26 @@ class ArchetypalAnalysisInterpreter:
         return np.asarray(purity_scores), float(np.mean(purity_scores))
 
     def information_gain(self, X: np.ndarray) -> list[tuple[int, float]]:
-        """
-        Calculate information gain when adding each additional archetype.
+        """Measure the marginal value of each additional archetype.
+
+        This critical metric quantifies the incremental explanatory power gained
+        by adding each archetype, essential for determining the optimal model
+        complexity. The analysis reveals:
+
+        - Diminishing returns pattern as archetypes are added
+        - Potential "elbow points" where additional archetypes yield minimal benefit
+        - Balance between model parsimony and explanatory power
+        - Evidence of underfitting or overfitting
+
+        This perspective is particularly valuable for communicating model complexity
+        decisions and ensuring resource-efficient analysis.
 
         Args:
-            X: Original data matrix
+            X: Original data matrix for reconstruction testing
 
         Returns:
-            List of (n_archetypes, gain) pairs
+            List of (n_archetypes, gain) pairs showing the marginal benefit
+            of increasing model complexity
         """
         if not self.models_dict:
             raise ValueError("No models available for information gain calculation")
@@ -161,25 +245,35 @@ class ArchetypalAnalysisInterpreter:
         top_k: int = 5,
         random_seed: int = 42,
     ) -> np.ndarray:
-        """
-        Calculate feature importance consistency across multiple initializations.
+        """Evaluate the stability of feature importance across multiple initializations.
+
+        This reliability assessment measures whether the same features consistently
+        define each archetype across different optimization runs. Consistency is
+        critical for interpretation because:
+
+        - Unstable feature importance undermines confidence in interpretations
+        - Reliable patterns indicate genuine data structure rather than optimization artifacts
+        - Consistent archetypes enable more dependable knowledge extraction
+        - Higher consistency justifies stronger claims about discovered patterns
+
+        This analysis is particularly important in exploratory contexts where
+        results guide hypothesis generation or decision-making.
 
         Args:
-            X: Original data matrix
-            n_archetypes: Number of archetypes to evaluate
-            n_trials: Number of different initializations to try
-            top_k: Number of top features to consider
-            random_seed: Base random seed (will be incremented for each trial)
+            X: Data matrix for fitting trial models
+            n_archetypes: Archetype count to evaluate
+            n_trials: Number of different initializations for consistency testing
+            top_k: Number of top features to consider in consistency calculation
+            random_seed: Base random seed (incremented for each trial)
 
         Returns:
-            Array of consistency scores for each archetype
+            Array of consistency scores for each archetype (higher values
+            indicate more stable feature importance across initializations)
         """
         importance_matrices = []
 
         for i in range(n_trials):
-            model = ImprovedArchetypalAnalysis(
-                n_archetypes=n_archetypes, random_seed=random_seed + i
-            )
+            model = ImprovedArchetypalAnalysis(n_archetypes=n_archetypes, random_seed=random_seed + i)
             model.fit(X)
 
             # Calculate feature importance matrix
@@ -204,9 +298,7 @@ class ArchetypalAnalysisInterpreter:
                     overlap_count += overlap / top_k
 
             total_comparisons = (n_trials * (n_trials - 1)) / 2
-            consistency_scores[i] = (
-                overlap_count / total_comparisons if total_comparisons > 0 else 0
-            )
+            consistency_scores[i] = overlap_count / total_comparisons if total_comparisons > 0 else 0
 
         return consistency_scores
 
@@ -297,27 +389,19 @@ class ArchetypalAnalysisInterpreter:
         if self.models_dict is None:
             raise ValueError("No models available for optimal archetype selection")
 
-        if method == "balance" and all(
-            "balance_score" in self.results[k] for k in list(self.models_dict.keys())[1:]
-        ):
-            scores = {
-                k: self.results[k]["balance_score"] for k in list(self.models_dict.keys())[1:]
-            }
+        if method == "balance" and all("balance_score" in self.results[k] for k in list(self.models_dict.keys())[1:]):
+            scores = {k: self.results[k]["balance_score"] for k in list(self.models_dict.keys())[1:]}
             best_k = max(scores, key=lambda k: scores[k])
 
         elif method == "interpretability":
-            scores = {
-                k: self.results[k]["interpretability_score"] for k in list(self.models_dict.keys())
-            }
+            scores = {k: self.results[k]["interpretability_score"] for k in list(self.models_dict.keys())}
             best_k = max(scores, key=lambda k: scores[k])
 
         elif method == "information_gain" and all(
             "information_gain" in self.results[k] for k in list(self.models_dict.keys())[1:]
         ):
             # Detect decay in information gain (elbow method)
-            ks = sorted(
-                k for k in list(self.models_dict.keys()) if k > min(list(self.models_dict.keys()))
-            )
+            ks = sorted(k for k in list(self.models_dict.keys()) if k > min(list(self.models_dict.keys())))
             gains = [self.results[k]["information_gain"] for k in ks]
 
             # Calculate differences in information gain
@@ -417,9 +501,7 @@ class BiarchetypalAnalysisInterpreter:
     Provides quantitative measures for biarchetype interpretability and optimal number selection.
     """
 
-    def __init__(
-        self, models_dict: dict[tuple[int, int], BiarchetypalAnalysis] | None = None
-    ) -> None:
+    def __init__(self, models_dict: dict[tuple[int, int], BiarchetypalAnalysis] | None = None) -> None:
         """
         Initialize the interpreter.
 
@@ -458,11 +540,7 @@ class BiarchetypalAnalysisInterpreter:
         for i in range(n_archetypes):
             # Calculate the difference between this archetype's values and the maximum values of other archetypes
             other_archetypes = np.delete(archetypes, i, axis=0)
-            max_others = (
-                np.max(other_archetypes, axis=0)
-                if len(other_archetypes) > 0
-                else np.zeros(n_features)
-            )
+            max_others = np.max(other_archetypes, axis=0) if len(other_archetypes) > 0 else np.zeros(n_features)
             distinctiveness = archetypes[i] - max_others
 
             # Sum the positive differences (features that are particularly prominent in this archetype)
@@ -498,9 +576,7 @@ class BiarchetypalAnalysisInterpreter:
         # Lower scores indicate higher sparsity (better interpretability)
         return 1 - sparsity_scores
 
-    def cluster_purity(
-        self, weights: np.ndarray, threshold: float = 0.6
-    ) -> tuple[np.ndarray, float]:
+    def cluster_purity(self, weights: np.ndarray, threshold: float = 0.6) -> tuple[np.ndarray, float]:
         """
         Calculate purity of each archetype's associated data points.
 
@@ -544,9 +620,7 @@ class BiarchetypalAnalysisInterpreter:
                 # Retrieve row and column weights using the get_all_weights method
                 weights_first, weights_second = model.get_all_weights()
             except ValueError as e:
-                raise ValueError(
-                    f"Model with archetypes ({k1}, {k2}) must be fitted before evaluation: {e}"
-                ) from e
+                raise ValueError(f"Model with archetypes ({k1}, {k2}) must be fitted before evaluation: {e}") from e
 
             # First archetype set interpretability metrics
             distinctiveness_first = self.feature_distinctiveness(np.array(archetypes_first))
@@ -566,12 +640,8 @@ class BiarchetypalAnalysisInterpreter:
             avg_sparsity_second = np.mean(sparsity_second)
 
             # Interpretability scores (higher is better)
-            interpretability_first = (
-                avg_distinctiveness_first + avg_sparsity_first + avg_purity_first
-            ) / 3
-            interpretability_second = (
-                avg_distinctiveness_second + avg_sparsity_second + avg_purity_second
-            ) / 3
+            interpretability_first = (avg_distinctiveness_first + avg_sparsity_first + avg_purity_first) / 3
+            interpretability_second = (avg_distinctiveness_second + avg_sparsity_second + avg_purity_second) / 3
 
             # Combined score for both sets
             combined_interpretability = (interpretability_first + interpretability_second) / 2
@@ -642,9 +712,7 @@ class BiarchetypalAnalysisInterpreter:
             # Balance score between information gain and interpretability
             interp = self.results[k1, k2]["combined_interpretability"]
             if gain + interp > 0:
-                self.results[k1, k2]["balance_score"] = (
-                    2 * (gain * interp) / (gain + interp)
-                )  # Harmonic mean
+                self.results[k1, k2]["balance_score"] = 2 * (gain * interp) / (gain + interp)  # Harmonic mean
             else:
                 self.results[k1, k2]["balance_score"] = 0
 
@@ -720,9 +788,7 @@ class BiarchetypalAnalysisInterpreter:
         for i, k1 in enumerate(k1_values):
             for j, k2 in enumerate(k2_values):
                 if (k1, k2) in self.results:
-                    interpretability_matrix[i, j] = self.results[k1, k2][
-                        "combined_interpretability"
-                    ]
+                    interpretability_matrix[i, j] = self.results[k1, k2]["combined_interpretability"]
                     if "balance_score" in self.results[k1, k2]:
                         balance_matrix[i, j] = self.results[k1, k2]["balance_score"]
                     error_matrix[i, j] = self.results[k1, k2]["reconstruction_error"]

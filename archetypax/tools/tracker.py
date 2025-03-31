@@ -1,8 +1,18 @@
 """
-ArchetypeTracker: A specialized subclass of ImprovedArchetypalAnalysis designed to monitor the movement of archetypes.
+ArchetypeTracker: Advanced monitoring system for archetypal optimization dynamics.
 
-This class extends the ImprovedArchetypalAnalysis class to track the positions of archetypes at each iteration of the optimization process.
-It includes additional functionality for visualizing the movement of archetypes and the boundary proximity of archetypes.
+This specialized extension captures the complete evolutionary journey of archetypes
+during model training, addressing the critical need to understand optimization behavior
+beyond final results alone. By recording archetype positions, boundary relationships,
+and loss trajectories at each iteration, it enables:
+
+1. Model debugging and verification by revealing optimization bottlenecks
+2. Scientific insights into how archetypes discover and adapt to data structures
+3. Improved hyperparameter selection based on convergence patterns
+4. Compelling visualizations of archetype evolution for stakeholder communications
+
+This capability is particularly valuable when fine-tuning models, understanding
+complex datasets, or diagnosing unexpected analysis results.
 """
 
 from functools import partial
@@ -18,10 +28,35 @@ from ..models.archetypes import ImprovedArchetypalAnalysis
 
 
 class ArchetypeTracker(ImprovedArchetypalAnalysis):
-    """A specialized subclass designed to monitor the movement of archetypes."""
+    """Advanced archetype monitoring system for optimization trajectory analysis.
+
+    This extension of ImprovedArchetypalAnalysis maintains a complete history of
+    archetype positions, loss values, and boundary relationships throughout the
+    optimization process. Unlike standard models that only preserve final states,
+    this tracker enables in-depth analysis of optimization dynamics, including:
+
+    - Identification of degenerate solutions or local minima traps
+    - Visualization of archetype movement paths during convergence
+    - Measurement of boundary proximity and stability over time
+    - Detection of oscillations or under/over-projection issues
+
+    These capabilities are essential for model debugging, hyperparameter tuning,
+    and gaining scientific insights into how archetypes adapt to data structures.
+    """
 
     def __init__(self, *args, **kwargs):
-        """Initialize the ArchetypeTracker with parameters identical to those of ImprovedArchetypalAnalysis."""
+        """Initialize the ArchetypeTracker with comprehensive monitoring capabilities.
+
+        Creates a tracker with identical initialization parameters to ImprovedArchetypalAnalysis
+        but adds specialized tracking arrays and optimization settings tuned for
+        detailed movement analysis. These settings provide more conservative updates
+        to better capture transitional states during optimization.
+
+        Args:
+            *args: Positional arguments passed to parent class
+            **kwargs: Keyword arguments passed to parent class, with optional
+                      early_stopping_patience parameter (default: 100)
+        """
         super().__init__(*args, **kwargs)
         if isinstance(kwargs.get("logger_level"), str) and kwargs.get("logger_level") is not None:
             logger_level = kwargs["logger_level"].lower()
@@ -57,9 +92,9 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         self.loss_history = []
         self.optimizer: optax.GradientTransformation = optax.adam(learning_rate=self.learning_rate)
         # Specific settings for archetype updates
-        self.archetype_grad_scale = 1.0  # Gradient scale for archetypes (reduced from 1.5 to 1.0)
-        self.noise_scale = 0.02  # Magnitude of initial noise (reduced from 0.03)
-        self.exploration_noise_scale = 0.05  # Magnitude of exploration noise (reduced from 0.07)
+        self.archetype_grad_scale = 1.0  # Gradient scale for archetypes
+        self.noise_scale = 0.02  # Magnitude of initial noise
+        self.exploration_noise_scale = 0.05  # Magnitude of exploration noise
         # Track position metrics
         self.boundary_proximity_history = []  # History of boundary proximity scores
         self.is_outside_history = []  # History of whether archetypes are outside the convex hull
@@ -67,15 +102,28 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
         self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
 
     def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "ArchetypeTracker":
-        """Train the model while documenting the positions of archetypes at each iteration.
+        """Train the model while capturing detailed archetype evolution data.
+
+        This enhanced fitting process extends standard training with comprehensive
+        tracking of archetype positions, boundary relationships, and optimization
+        metrics at each iteration. The method uses more conservative update settings
+        to ensure smooth transitions are captured, while maintaining comparable
+        convergence properties to the parent implementation.
+
+        During training, the tracker stores:
+        - Complete history of archetype positions at each iteration
+        - Loss value progression throughout optimization
+        - Boundary proximity measurements over time
+        - Detection of archetypes outside the convex hull
+        - Detailed movement metrics for stability analysis
 
         Args:
-            X: Data matrix of shape (n_samples, n_features)
-            normalize: Whether to normalize the data before fitting.
-            **kwargs: Additional keyword arguments for the fit method.
+            X: Data matrix (n_samples, n_features)
+            normalize: Whether to normalize features before fitting
+            **kwargs: Additional parameters for customizing the fitting process
 
         Returns:
-            Self
+            Self - fitted model instance with complete archetype history
         """
         # Data preprocessing
         self.X_mean = X.mean(axis=0)
@@ -139,10 +187,8 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
             return self.loss_function(arch, weights, X_jax)
 
         for i in range(self.max_iter):
-            # Update current iteration
             self.current_iteration = i
 
-            # Calculate weights
             weights = self._calculate_weights(X_jax, archetypes)
             loss_value, grads = jax.value_and_grad(loss_fn)(archetypes)
 
