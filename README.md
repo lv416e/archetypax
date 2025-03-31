@@ -19,11 +19,14 @@ archetypal-analysis, jax, machine-learning, dimensionality-reduction, convex-hul
 ## Overview
 
 `archetypax` is a high-performance implementation of Archetypal Analysis (AA) that leverages JAX for GPU acceleration.<br>
-Archetypal Analysis is a matrix factorization technique that represents data points<br>
+Archetypal Analysis is a powerful matrix factorization technique that represents data points<br>
 as convex combinations of extreme points (archetypes) found within the data's convex hull.<br>
 
-Unlike traditional dimensionality reduction techniques like PCA which finds a basis of orthogonal components,<br>
-AA finds interpretable extremal points that often correspond to meaningful prototypes in the data.<br>
+Unlike traditional dimensionality reduction techniques like PCA which finds abstract orthogonal components,<br>
+AA discovers interpretable extremal points that often correspond to meaningful prototypes in your data.<br>
+
+This makes it particularly valuable for applications requiring both dimensionality reduction and<br>
+**human-interpretable insights, such as market segmentation, document analysis, and anomaly detection.**<br>
 
 ## Features
 
@@ -78,10 +81,35 @@ poetry add git+https://github.com/lv416e/archetypax.git
 ```
 
 ### Requirements
-- Python 3.10+
-- JAX
-- NumPy
-- scikit-learn
+
+| Type | Dependency | Version | Description |
+|------|------------|---------|-------------|
+| **Core** | Python | >=3.10 | Required for modern language features and compatibility with JAX |
+| **Core** | JAX | >=0.4.0 | Powers the hardware acceleration and automatic differentiation |
+| **Core** | NumPy | >=1.20.0 | Handles core numerical operations and array manipulations |
+| **Core** | optax | >=0.1.0 | JAX-based optimization framework for gradient-based updates |
+| **Core** | pandas | >=1.3.0 | Data manipulation and analysis library |
+| **Core** | scikit-learn | >=1.0.0 | Provides machine learning utilities and compatible interfaces |
+| **Examples** | jupyter | >=1.0.0 | Interactive computing environment for notebooks |
+| **Examples** | matplotlib | >=3.7.5 | Required for visualization functionality |
+| **Examples** | seaborn | >=0.13.2 | Statistical data visualization |
+| **Dev** | black | ==23.7.0 | Code formatter |
+| **Dev** | mypy | >=1.8.0 | Static type checker |
+| **Dev** | pytest | >=7.0.0 | Testing framework |
+| **Dev** | ruff | >=0.9.0 | Fast Python linter and formatter |
+
+The library can be installed with optional feature sets:
+
+```bash
+# For development
+pip install archetypax[dev]
+
+# For running examples
+pip install archetypax[examples]
+
+# For building documentation
+pip install archetypax[docs]
+```
 
 ## Quick Start
 
@@ -134,40 +162,53 @@ from archetypax.models import ArchetypalAnalysis
 from archetypax.tools import ArchetypalAnalysisVisualizer, ArchetypeTracker
 ```
 
+## Changelog
+
+For a detailed list of changes and version history, please see the [CHANGELOG.md](CHANGELOG.md) file.
+
 ## Documentation
 
 ### Parameters
 
 #### ArchetypalAnalysis / ImprovedArchetypalAnalysis
-- `n_archetypes`: Number of archetypes to find
-- `max_iter`: Maximum number of iterations (default: 500)
-- `tol`: Convergence tolerance (default: 1e-6)
-- `random_seed`: Random seed for initialization (default: 42)
-- `learning_rate`: Learning rate for optimizer (default: 0.001)
-- `lambda_reg`: Regularization strength for weight distribution (default: 0.01)
-- `normalize`: Whether to normalize features before fitting (default: False)
-- `projection_method`: Method for projecting archetypes ("cbap", "convex_hull", "knn")
-- `projection_alpha`: Blending coefficient for boundary projection (default: 0.1)
-- `archetype_init_method`: Initialization strategy ("directional", "kmeans++", "qhull")
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `n_archetypes` | int | - | Number of archetypes to find |
+| `max_iter` | int | 500 | Maximum number of iterations |
+| `tol` | float | 1e-6 | Convergence tolerance |
+| `random_seed` | int | 42 | Random seed for initialization |
+| `learning_rate` | float | 0.001 | Learning rate for optimizer |
+| `lambda_reg` | float | 0.01 | Regularization strength for weight distribution |
+| `normalize` | bool | False | Whether to normalize features before fitting |
+| `projection_method` | str | "cbap" | Method for projecting archetypes ("cbap", "convex_hull", "knn") |
+| `projection_alpha` | float | 0.1 | Blending coefficient for boundary projection |
+| `archetype_init_method` | str | "directional" | Initialization strategy ("directional", "kmeans++", "qhull") |
 
 #### BiarchetypalAnalysis
 
-- `n_row_archetypes`: Number of archetypes in observation space
-- `n_col_archetypes`: Number of archetypes in feature space
-- `max_iter`: Maximum number of iterations (default: 500)
-- `tol`: Convergence tolerance (default: 1e-6)
-- `random_seed`: Random seed for initialization (default: 42)
-- `learning_rate`: Learning rate for optimizer (default: 0.001)
-- `projection_method`: Method for projecting archetypes (default: "default")
-- `lambda_reg`: Regularization strength for entropy terms (default: 0.01)
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `n_row_archetypes` | int | - | Number of archetypes in observation space |
+| `n_col_archetypes` | int | - | Number of archetypes in feature space |
+| `max_iter` | int | 500 | Maximum number of iterations |
+| `tol` | float | 1e-6 | Convergence tolerance |
+| `random_seed` | int | 42 | Random seed for initialization |
+| `learning_rate` | float | 0.001 | Learning rate for optimizer |
+| `projection_method` | str | "default" | Method for projecting archetypes |
+| `lambda_reg` | float | 0.01 | Regularization strength for entropy terms |
 
 ### Methods
 
-- `fit(X)`: Fit the model to the data
-- `transform(X)`: Transform new data to archetype weights
-- `fit_transform(X)`: Fit the model and transform the data
-- `reconstruct(X)`: Reconstruct data from archetype weights
-- `get_loss_history()`: Get the loss history from training
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `fit(X)` | model | Fit the model to the data |
+| `transform(X)` | array | Transform new data to archetype weights |
+| `fit_transform(X)` | array | Fit the model and transform the data |
+| `reconstruct(X)` | array | Reconstruct data from archetype weights |
+| `get_loss_history()` | array | Get the loss history from training |
+| `get_all_archetypes()` | tuple | Get both sets of archetypes (BiarchetypalAnalysis only) |
+| `get_all_weights()` | tuple | Get both sets of weights (BiarchetypalAnalysis only) |
 
 ## Examples
 
