@@ -16,7 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refined class and method docstrings in `ImprovedArchetypalAnalysis` with parameter impact explanations and usage guidance
 - Enriched docstrings for key public methods (`transform`, `fit`, `fit_transform`, `project_archetypes`, `loss_function`) with clear explanations of their purpose and significance
 - Upgraded documentation in `tools/` modules to better explain analysis and visualization capabilities
-- Standardized docstring quality with native-level English throughout the codebase
 
 ### Fixed
 
