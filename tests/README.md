@@ -77,5 +77,5 @@ When contributing to ArchetypAX, please ensure:
 
 1. All new features are accompanied by appropriate tests
 2. Existing tests pass with your changes
-3. Test coverage remains high (preferably >90%)
+3. Test coverage remains high (preferably >80%)
 4. Tests include both positive and negative cases

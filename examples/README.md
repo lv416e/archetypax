@@ -4,7 +4,7 @@ This directory contains examples demonstrating the usage of the ArchetypAX libra
 
 ## Available Examples
 
-### [Basic Archetypal Analysis](00_demonstration_archetypal_analysis.ipynb)
+### [Basic Archetypal Analysis](01_archetypal_analysis_tutorial.ipynb)
 
 A foundational introduction to archetypal analysis covering:
 
@@ -24,7 +24,7 @@ Demonstrates advanced interpretation techniques using the `ArchetypalAnalysisInt
 3. **Feature Analysis**: Identifying distinctive features that characterize each archetype
 4. **Pattern Discovery**: Revealing hidden structures and relationships in high-dimensional data
 
-### [Biarchetypal Analysis](05_biarchetypes_interpreter_tutorial.ipynb)
+### [Biarchetypal Analysis](04_biarchetypal_analysis_tutorial.ipynb)
 
 Explores dual-perspective pattern discovery with `BiarchetypalAnalysis`:
 
@@ -33,7 +33,7 @@ Explores dual-perspective pattern discovery with `BiarchetypalAnalysis`:
 3. **Feature Clustering**: Identifying related features through column archetype patterns
 4. **Enhanced Interpretability**: Leveraging the biarchetypal framework for clearer insights
 
-### [Archetype Tracking](06_archetype_tracker_tutorial.ipynb)
+### [Archetype Tracking](00_demonstration_archetypal_analysis.ipynb)
 
 Demonstrates optimization trajectory analysis with `ArchetypeTracker`:
 
