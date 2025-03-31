@@ -116,7 +116,7 @@ pip install archetypax[docs]      # Documentation dependencies
 
 ```python
 import numpy as np
-from archetypax import ArchetypalAnalysis
+from archetypax import ImprovedArchetypalAnalysis as ArchetypalAnalysis
 
 # Generate sample data
 np.random.seed(42)
