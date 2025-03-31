@@ -2,21 +2,45 @@
 
 This directory contains examples demonstrating the usage of the ArchetypAX library.
 
-## Basic Usage
+## Available Examples
 
-[basic_usage.ipynb](basic_usage.ipynb) - A Jupyter notebook showcasing the fundamental capabilities and usage patterns of ArchetypAX. The notebook covers:
+### [Basic Archetypal Analysis](00_demonstration_archetypal_analysis.ipynb)
 
-1. **Synthetic Data Generation**: Creating two-dimensional data with cluster structures to visually demonstrate the effectiveness of archetypal analysis.
+A foundational introduction to archetypal analysis covering:
 
-2. **Model Fitting**: Demonstrating how to fit models to data using the `ArchetypalAnalysis` class.
+1. **Synthetic Data Generation**: Creating structured data to visually demonstrate the effectiveness of archetypal analysis
+2. **Model Fitting**: Implementing and configuring the `ArchetypalAnalysis` and `ImprovedArchetypalAnalysis` classes
+3. **Archetype Visualization**: Rendering the geometric relationship between archetypes and data points
+4. **Evaluation Metrics**: Assessing model quality using the comprehensive `ArchetypalAnalysisEvaluator`
+5. **Weight Distribution Analysis**: Examining attribution patterns between data points and archetypes
+6. **Feature Importance**: Calculating and visualizing feature contributions across different archetypes
 
-3. **Archetype Visualization**: Visualizing the relationship between identified archetypes and data points.
+### [Archetypal Analysis Interpreter](02_archetypal_interpreter_tutorial.ipynb)
 
-4. **Evaluation Metrics**: Using the `ArchetypalAnalysisEvaluator` class to assess model quality.
+Demonstrates advanced interpretation techniques using the `ArchetypalAnalysisInterpreter`:
 
-5. **Weight Distribution Analysis**: Analyzing the distribution of weights (attribution scores) of data points to archetypes.
+1. **Model Comparison**: Assessing different archetype configurations to determine optimal complexity
+2. **Interpretability Metrics**: Quantifying the semantic clarity of discovered archetypes
+3. **Feature Analysis**: Identifying distinctive features that characterize each archetype
+4. **Pattern Discovery**: Revealing hidden structures and relationships in high-dimensional data
 
-6. **Feature Importance**: Computing and visualizing feature importance across different archetypes.
+### [Biarchetypal Analysis](05_biarchetypes_interpreter_tutorial.ipynb)
+
+Explores dual-perspective pattern discovery with `BiarchetypalAnalysis`:
+
+1. **Dual-Space Modeling**: Simultaneous discovery of patterns in both observation and feature spaces
+2. **Cross-Modal Analysis**: Examining relationships between row and column archetypes
+3. **Feature Clustering**: Identifying related features through column archetype patterns
+4. **Enhanced Interpretability**: Leveraging the biarchetypal framework for clearer insights
+
+### [Archetype Tracking](06_archetype_tracker_tutorial.ipynb)
+
+Demonstrates optimization trajectory analysis with `ArchetypeTracker`:
+
+1. **Convergence Visualization**: Monitoring archetype movement during optimization
+2. **Boundary Dynamics**: Analyzing how archetypes approach the data convex hull over iterations
+3. **Stability Assessment**: Evaluating convergence quality and potential degenerate solutions
+4. **Diagnostic Tools**: Using trajectory information to improve model configuration
 
 ## Running the Examples
 
@@ -32,21 +56,22 @@ Or install dependencies individually:
 pip install matplotlib pandas seaborn jupyter
 ```
 
-Then launch Jupyter and open the notebook:
+Then launch Jupyter and open any notebook:
 
 ```bash
-jupyter notebook basic_usage.ipynb
+jupyter notebook examples/
 ```
 
-## Future Examples
+## Planned Examples
 
-We plan to provide additional examples including:
+Future tutorials will cover:
 
-- Archetypal analysis with real-world datasets
-- Analysis and visualization of high-dimensional data
-- Interpretation of archetypal analysis results
-- Comparison with other dimensionality reduction techniques
+- **Real-World Applications**: Archetypal analysis of diverse datasets from different domains
+- **Advanced Visualization**: Sophisticated techniques for high-dimensional archetype visualization
+- **Comparison Studies**: Benchmarking against alternative dimensionality reduction and clustering methods
+- **Integration Patterns**: Incorporating archetypal analysis into broader machine learning pipelines
+- **Optimization Strategies**: Fine-tuning model parameters for specific analytical objectives
 
 ## Contributing
 
-We welcome suggestions for new examples and tutorials. Please contribute through pull requests.
+We welcome contributions of new examples, extensions to existing tutorials, or suggestions for improvements. Please feel free to submit pull requests or open issues with your ideas.

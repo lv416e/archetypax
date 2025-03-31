@@ -2,6 +2,13 @@
 
 **ArchetypAX** - Hardware-accelerated Archetypal Analysis implementation using JAX
 
+<!--
+Repository topics for better discoverability:
+archetypal-analysis, jax, machine-learning, dimensionality-reduction, convex-hull-optimization
+-->
+
+> A Python library for Hardware-accelerated Archetypal Analysis using JAX.<br>Discover extreme patterns in your data with high-performance matrix factorization, convex hull optimization, and interpretable results.
+
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PyPI](https://img.shields.io/pypi/v/archetypax.svg?cache=no)](https://pypi.org/project/archetypax/)
 [![Tests](https://github.com/lv416e/archetypax/actions/workflows/tests.yml/badge.svg)](https://github.com/lv416e/archetypax/actions/workflows/tests.yml)
@@ -15,16 +22,30 @@
 Archetypal Analysis is a matrix factorization technique that represents data points<br>
 as convex combinations of extreme points (archetypes) found within the data's convex hull.<br>
 
-Unlike traditional dimensionality reduction techniques like PCA which finds a basis of orthogonal components, <br>
-AA finds interpretable extremal points that often correspond to meaningful prototypes in the data.
+Unlike traditional dimensionality reduction techniques like PCA which finds a basis of orthogonal components,<br>
+AA finds interpretable extremal points that often correspond to meaningful prototypes in the data.<br>
 
 ## Features
 
-- 🚀 **GPU/TPU Acceleration**: Utilizes JAX for fast computation on GPUs
+- 🚀 **GPU/TPU Acceleration**: Utilizes JAX for fast computation on GPUs and TPUs
 - 🔍 **Interpretable Results**: Finds meaningful archetypes that represent extremal patterns in data
-- 🧠 **Smart Initialization**: Uses k-means++ style initialization for better convergence
-- 🛠️ **Numerical Stability**: Implements various techniques for improved stability
-- 📊 **scikit-learn Compatible API**: Implements the familiar fit/transform interface
+- 🧠 **Smart Initialization**: Implements multiple strategic initialization methods including k-means++ and directional initialization
+- 🛠️ **Numerical Stability**: Employs sophisticated techniques for improved convergence and stability
+- 📊 **scikit-learn Compatible API**: Fully implements the familiar fit/transform interface for seamless integration
+- 🔄 **Dual-perspective Analysis**: Offers BiarchetypalAnalysis for simultaneous row and column pattern discovery
+- 📈 **Advanced Tracking**: Provides ArchetypeTracker for monitoring optimization trajectories and convergence dynamics
+- 🎯 **Comprehensive Tooling**: Features extensive evaluation, interpretation, and visualization capabilities
+- 📋 **Thorough Documentation**: Includes detailed rationales explaining why each method and parameter matters
+
+## Related Projects and Techniques
+
+ArchetypAX can be used alongside or compared with these related approaches:
+
+- **PCA**: Principal Component Analysis finds orthogonal directions of maximum variance
+- **NMF**: Non-negative Matrix Factorization decomposes data into non-negative components
+- **k-means**: Clustering technique that partitions data into k clusters
+- **JAX Ecosystem**: Compatible with JAX-based machine learning frameworks like Flax and Haiku
+- **scikit-learn**: Follows similar API conventions, allowing easy integration
 
 ## Installation
 
@@ -94,7 +115,7 @@ ArchetypAX supports multiple import patterns for flexibility:
 ### Direct Class Imports (Recommended)
 
 ```python
-from archetypax import ArchetypalAnalysis, ImprovedArchetypalAnalysis, BiarchetypalAnalysis
+from archetypax import ArchetypalAnalysis, ImprovedArchetypalAnalysis, BiarchetypalAnalysis, ArchetypeTracker
 ```
 
 ### Explicit Module Imports
@@ -103,13 +124,14 @@ from archetypax import ArchetypalAnalysis, ImprovedArchetypalAnalysis, Biarchety
 from archetypax.models.base import ArchetypalAnalysis
 from archetypax.models.biarchetypes import BiarchetypalAnalysis
 from archetypax.tools.evaluation import ArchetypalAnalysisEvaluator
+from archetypax.tools.tracker import ArchetypeTracker
 ```
 
 ### Module-Level Imports
 
 ```python
 from archetypax.models import ArchetypalAnalysis
-from archetypax.tools import ArchetypalAnalysisVisualizer
+from archetypax.tools import ArchetypalAnalysisVisualizer, ArchetypeTracker
 ```
 
 ## Documentation
@@ -122,16 +144,22 @@ from archetypax.tools import ArchetypalAnalysisVisualizer
 - `tol`: Convergence tolerance (default: 1e-6)
 - `random_seed`: Random seed for initialization (default: 42)
 - `learning_rate`: Learning rate for optimizer (default: 0.001)
+- `lambda_reg`: Regularization strength for weight distribution (default: 0.01)
+- `normalize`: Whether to normalize features before fitting (default: False)
+- `projection_method`: Method for projecting archetypes ("cbap", "convex_hull", "knn")
+- `projection_alpha`: Blending coefficient for boundary projection (default: 0.1)
+- `archetype_init_method`: Initialization strategy ("directional", "kmeans++", "qhull")
 
 #### BiarchetypalAnalysis
 
-- `n_archetypes_first`: Number of archetypes in the first set
-- `n_archetypes_second`: Number of archetypes in the second set
-- `mixture_weight`: Weight for mixing the two archetype sets (0-1) (default: 0.5)
+- `n_row_archetypes`: Number of archetypes in observation space
+- `n_col_archetypes`: Number of archetypes in feature space
 - `max_iter`: Maximum number of iterations (default: 500)
 - `tol`: Convergence tolerance (default: 1e-6)
 - `random_seed`: Random seed for initialization (default: 42)
 - `learning_rate`: Learning rate for optimizer (default: 0.001)
+- `projection_method`: Method for projecting archetypes (default: "default")
+- `lambda_reg`: Regularization strength for entropy terms (default: 0.01)
 
 ### Methods
 
@@ -140,8 +168,6 @@ from archetypax.tools import ArchetypalAnalysisVisualizer
 - `fit_transform(X)`: Fit the model and transform the data
 - `reconstruct(X)`: Reconstruct data from archetype weights
 - `get_loss_history()`: Get the loss history from training
-- `get_all_archetypes()`: Get both sets of archetypes (BiarchetypalAnalysis only)
-- `get_all_weights()`: Get both sets of weights (BiarchetypalAnalysis only)
 
 ## Examples
 
@@ -150,7 +176,7 @@ from archetypax.tools import ArchetypalAnalysisVisualizer
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
-from archetypax import ImprovedArchetypalAnalysis as ArchetypalAnalysis
+from archetypax import ImprovedArchetypalAnalysis
 from archetypax.tools.visualization import ArchetypalAnalysisVisualizer
 
 # Generate some interesting 2D data (a triangle with points inside)
@@ -160,7 +186,7 @@ weights = np.random.dirichlet(np.ones(3), size=n_samples)
 X = weights @ vertices
 
 # Fit archetypal analysis with 3 archetypes
-model = ArchetypalAnalysis(n_archetypes=3)
+model = ImprovedArchetypalAnalysis(n_archetypes=3, archetype_init_method="directional")
 model.fit(X)
 
 # Plot original data and archetypes
@@ -182,54 +208,88 @@ from archetypax.tools.visualization import ArchetypalAnalysisVisualizer
 np.random.seed(42)
 X = np.random.rand(500, 5)
 
-# Initialize and fit the model with two sets of archetypes
+# Initialize and fit the model with row and column archetypes
 model = BiarchetypalAnalysis(
-    n_archetypes_first=2,   # Number of archetypes in the first set
-    n_archetypes_second=2,  # Number of archetypes in the second set
-    mixture_weight=0.5,     # Weight for mixing the two archetype sets (0-1)
+    n_row_archetypes=2,   # Number of archetypes in observation space
+    n_col_archetypes=2,   # Number of archetypes in feature space
     max_iter=500,
     random_seed=42
 )
 model.fit(X)
 
 # Get both sets of archetypes
-positive_archetypes, negative_archetypes = model.get_all_archetypes()
-print("Positive archetypes shape:", positive_archetypes.shape)
-print("Negative archetypes shape:", negative_archetypes.shape)
+row_archetypes, col_archetypes = model.get_all_archetypes()
+print("Row archetypes shape:", row_archetypes.shape)
+print("Column archetypes shape:", col_archetypes.shape)
 
 # Get both sets of weights
-positive_weights, negative_weights = model.get_all_weights()
-print("Positive weights shape:", positive_weights.shape)
-print("Negative weights shape:", negative_weights.shape)
+row_weights, col_weights = model.get_all_weights()
+print("Row weights shape:", row_weights.shape)
+print("Column weights shape:", col_weights.shape)
 
-# Reconstruct data using both sets of archetypes
+# Reconstruct data using biarchetypes
 X_reconstructed = model.reconstruct()
 mse = np.mean((X - X_reconstructed) ** 2)
 print(f"Reconstruction MSE: {mse:.6f}")
+```
+
+### Tracking Archetype Evolution
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from archetypax import ArchetypeTracker
+
+# Generate sample data
+np.random.seed(42)
+X = np.random.rand(1000, 10)
+
+# Initialize the tracker
+tracker = ArchetypeTracker(
+    n_archetypes=3,
+    max_iter=300,
+    random_seed=42
+)
+
+# Fit the model while tracking archetype movement
+tracker.fit(X)
+
+# Visualize the archetype movement trajectory
+tracker.visualize_movement()
+
+# Visualize boundary proximity over iterations
+tracker.visualize_boundary_proximity()
 ```
 
 ## How It Works
 
 Archetypal Analysis solves the following optimization problem:
 
-Given a data matrix $\mathbf{X} \in \mathbb{R}^{n \times d}$ with n samples and d features, find k archetypes $\mathbf{Z} \in \mathbb{R}^{k \times p}$ and weights $\mathbf{w} \in \mathbb{R}^{n \times k}$ such that:
+Given a data matrix $\mathbf{X} \in \mathbb{R}^{n \times d}$ with n samples and d features, find k archetypes $\mathbf{A} \in \mathbb{R}^{k \times d}$ and weights $\mathbf{W} \in \mathbb{R}^{n \times k}$ such that:
 
 $$
-\text{minimize} \| \mathbf{X} - \mathbf{w} \cdot \mathbf{Z} \|^2_{\text{F}}
+\text{minimize} \ \| \mathbf{X} - \mathbf{W} \cdot \mathbf{A} \|^2_{\text{F}}
 $$
 
 subject to:
 
-- $\mathbf{w}$ is non-negative
-- Each row of $\mathbf{w}$ sums to 1 (simplex constraint)
-- $\mathbf{Z}$ lies within the convex hull of $\mathbf{X}$
+- $\mathbf{W}$ is non-negative
+- Each row of $\mathbf{W}$ sums to 1 (simplex constraint)
+- $\mathbf{A}$ lies within the convex hull of $\mathbf{X}$
 
-This implementation uses JAX's automatic differentiation and optimization tools to efficiently solve this problem on GPUs. It also incorporates several enhancements:
+The biarchetypal extension solves a more complex factorization:
 
-1. **k-means++ style initialization** for better initial archetype positions
-2. **Entropy regularization** to promote more uniform weight distributions
-3. **Soft archetype projection** using k-nearest neighbors for improved stability
-4. **Gradient clipping** to prevent numerical issues
+$$
+\mathbf{X} \approx \mathbf{\alpha} \cdot \mathbf{\beta} \cdot \mathbf{X} \cdot \mathbf{\theta} \cdot \mathbf{\gamma}
+$$
+
+This implementation uses JAX's automatic differentiation and optimization tools to efficiently solve these problems on GPUs. It also incorporates several advanced enhancements:
+
+1. **Strategic initialization methods** including directional initialization, k-means++ style, and convex hull approximation
+2. **Intelligent regularization techniques** to promote interpretable weight distributions
+3. **Advanced projection methods** including adaptive convex boundary approximation (CBAP)
+4. **Sophisticated numerical stability safeguards** throughout the optimization process
+5. **Comprehensive trajectory tracking** for monitoring convergence dynamics
 
 ## Citation
 
