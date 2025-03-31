@@ -1,13 +1,11 @@
-# ArchetypAX
-
-**ArchetypAX** - Hardware-accelerated Archetypal Analysis implementation using JAX
+# ArchetypAX – Hardware-accelerated Archetypal Analysis with JAX
 
 <!--
 Repository topics for better discoverability:
 archetypal-analysis, jax, machine-learning, dimensionality-reduction, convex-hull-optimization
 -->
 
-> A Python library for Hardware-accelerated Archetypal Analysis using JAX.<br>Discover extreme patterns in your data with high-performance matrix factorization, convex hull optimization, and interpretable results.
+> Discover extreme patterns in your data with GPU/TPU-accelerated Archetypal Analysis, high-performance convex hull optimization, and interpretable matrix factorization.
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![PyPI](https://img.shields.io/pypi/v/archetypax.svg?cache=no)](https://pypi.org/project/archetypax/)
@@ -16,30 +14,51 @@ archetypal-analysis, jax, machine-learning, dimensionality-reduction, convex-hul
 [![Docs](https://github.com/lv416e/archetypax/actions/workflows/docs.yml/badge.svg)](https://github.com/lv416e/archetypax/actions/workflows/docs.yml)
 [![Release](https://github.com/lv416e/archetypax/actions/workflows/release.yml/badge.svg)](https://github.com/lv416e/archetypax/actions/workflows/release.yml)
 
+## Table of Contents
+- [Overview](#overview)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Import Patterns](#import-patterns)
+- [Documentation](#documentation)
+- [Examples](#examples)
+- [How It Works](#how-it-works)
+- [Changelog](#changelog)
+- [Citation](#citation)
+- [License](#license)
+- [Contributing](#contributing)
+- [Community](#community)
+
 ## Overview
 
-`archetypax` is a high-performance implementation of Archetypal Analysis (AA) that leverages JAX for GPU acceleration.<br>
-Archetypal Analysis is a powerful matrix factorization technique that represents data points<br>
+`archetypax` is a high-performance implementation of Archetypal Analysis (AA) leveraging JAX for GPU acceleration.<br>
+
+Archetypal Analysis is a powerful matrix factorization technique representing data points <br>
 as convex combinations of extreme points (archetypes) found within the data's convex hull.<br>
 
-Unlike traditional dimensionality reduction techniques like PCA which finds abstract orthogonal components,<br>
-AA discovers interpretable extremal points that often correspond to meaningful prototypes in your data.<br>
+Unlike traditional dimensionality reduction techniques like PCA, which finds abstract orthogonal components,<br>
+AA discovers interpretable extremal points often corresponding to meaningful prototypes.<br>
 
-This makes it particularly valuable for applications requiring both dimensionality reduction and<br>
-**human-interpretable insights, such as market segmentation, document analysis, and anomaly detection.**<br>
+This makes it valuable for applications requiring both dimensionality reduction and **human-interpretable insights**,<br>
+such as market segmentation, document analysis, and anomaly detection.<br>
 
 ## Features
 
-- 🚀 **GPU/TPU Acceleration**: Utilizes JAX for fast computation on GPUs and TPUs
-- 🔍 **Interpretable Results**: Finds meaningful archetypes that represent extremal patterns in data
-- 🧠 **Smart Initialization**: Implements multiple strategic initialization methods including k-means++ and directional initialization
-- 🛠️ **Numerical Stability**: Employs sophisticated techniques for improved convergence and stability
-- 📊 **scikit-learn Compatible API**: Fully implements the familiar fit/transform interface for seamless integration
-- 📈 **Advanced Tracking**: Provides ArchetypeTracker for monitoring optimization trajectories and convergence dynamics
-- 🎯 **Comprehensive Tooling**: Features extensive evaluation, interpretation, and visualization capabilities
-- 📋 **Thorough Documentation**: Includes detailed rationales explaining why each method and parameter matters
+**Performance & Stability**
+- 🚀 GPU/TPU acceleration using JAX
+- 🧠 Smart initialization (k-means++, directional)
+- 🛠️ Numerical stability & convergence techniques
 
-## Related Projects and Techniques
+**Usability & Compatibility**
+- 📊 scikit-learn compatible API (fit/transform)
+- 📋 Thorough documentation
+
+**Interpretability & Visualization**
+- 🔍 Meaningful interpretable archetypes
+- 📈 Advanced tracking & optimization trajectory monitoring
+- 🎯 Comprehensive evaluation & visualization tooling
+
+### Related Projects and Techniques
 
 ArchetypAX can be used alongside or compared with these related approaches:
 
@@ -51,32 +70,28 @@ ArchetypAX can be used alongside or compared with these related approaches:
 
 ## Installation
 
+Install with pip, uv, or poetry:
+
 ```bash
-# Using pip
+# pip
 pip install archetypax
-```
-
-or from GitHub:
-
-```bash
 pip install git+https://github.com/lv416e/archetypax.git
+
+# uv
+uv pip install archetypax
+uv pip install git+https://github.com/lv416e/archetypax.git
+
+# poetry
+poetry add archetypax
+poetry add git+https://github.com/lv416e/archetypax.git
 ```
 
-### Using uv
+Install optional dependencies:
 
 ```bash
-uv pip install archetypax
-# or from GitHub
-uv pip install git+https://github.com/lv416e/archetypax.git
-```
-
-### Using Poetry
-
-``` bash
-poetry add archetypax
-
-# or from GitHub
-poetry add git+https://github.com/lv416e/archetypax.git
+pip install archetypax[dev]       # Development dependencies
+pip install archetypax[examples]  # Example dependencies
+pip install archetypax[docs]      # Documentation dependencies
 ```
 
 ### Requirements
@@ -96,19 +111,6 @@ poetry add git+https://github.com/lv416e/archetypax.git
 | **Dev** | mypy | >=1.8.0 | Static type checker |
 | **Dev** | pytest | >=7.0.0 | Testing framework |
 | **Dev** | ruff | >=0.9.0 | Fast Python linter and formatter |
-
-The library can be installed with optional feature sets:
-
-```bash
-# For development
-pip install archetypax[dev]
-
-# For running examples
-pip install archetypax[examples]
-
-# For building documentation
-pip install archetypax[docs]
-```
 
 ## Quick Start
 
@@ -350,4 +352,20 @@ This project is licensed under the Apache License 2.0 - see the LICENSE file for
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome and highly encouraged! Before submitting a pull request, please review the following resources:
+
+- [Code of Conduct](CODE_OF_CONDUCT.md): Guidelines for community participation
+- [Security Policy](SECURITY.md): Vulnerability reporting and handling procedures
+
+To contribute to the project:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Community
+
+- 🐞 [Issue Tracker](https://github.com/lv416e/archetypax/issues): Report bugs and request features
+- 💬 [Discussions](https://github.com/lv416e/archetypax/discussions): Questions and general community interactions
