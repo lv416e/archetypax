@@ -1,4 +1,9 @@
-"""GPU-accelerated Archetypal Analysis implementation using JAX."""
+"""GPU-accelerated Archetypal Analysis implementation using JAX.
+
+This module provides a foundational implementation of Archetypal Analysis (AA)
+optimized for GPU acceleration via JAX. AA identifies extreme points (archetypes)
+that can represent the entire dataset through convex combinations.
+"""
 
 from functools import partial
 
@@ -12,7 +17,14 @@ from archetypax.logger import get_logger, get_message
 
 
 class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
-    """GPU-accelerated Archetypal Analysis implementation using JAX."""
+    """GPU-accelerated Archetypal Analysis implementation using JAX.
+
+    This class provides the core functionality for identifying archetypes -
+    extreme points that can represent data through convex combinations,
+    offering interpretable and meaningful insights into data structure.
+
+    Leverages JAX for efficient GPU computation and automatic differentiation.
+    """
 
     def __init__(
         self,
@@ -28,13 +40,23 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         Initialize the Archetypal Analysis model.
 
         Args:
-            n_archetypes: Number of archetypes to find
-            max_iter: Maximum number of iterations
-            tol: Convergence tolerance
-            random_seed: Random seed for initialization
-            learning_rate: Learning rate for optimizer (reduced for better stability)
-            normalize: Whether to normalize the data before fitting.
-            **kwargs: Additional keyword arguments for the fit method.
+            n_archetypes:
+                Number of archetypes to find - determines the dimensionality of the representation space
+            max_iter:
+                Maximum number of iterations for optimization convergence
+            tol:
+                Convergence tolerance for early stopping
+            random_seed:
+                Random seed for reproducible results
+            learning_rate:
+                Learning rate for optimizer - lower values provide better stability at the cost of slower convergence
+            normalize:
+                Whether to normalize the data before fitting - essential for features with different scales
+            **kwargs: Additional keyword arguments including:
+                early_stopping_patience:
+                    Number of iterations without improvement before stopping optimization
+                logger_level/verbose_level:
+                    Control for logging granularity
         """
         if isinstance(kwargs.get("logger_level"), str) and kwargs.get("logger_level") is not None:
             logger_level = kwargs["logger_level"].upper()
@@ -87,20 +109,23 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         self.early_stopping_patience = kwargs.get("early_stopping_patience", 100)
 
     def loss_function(self, archetypes: jnp.ndarray, weights: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """Add regularization term to the loss function.
+        """Calculate reconstruction loss with entropy regularization.
+
+        Computes the fundamental objective: minimize reconstruction error while
+        encouraging more discriminative weights through entropy regularization.
 
         Args:
-            archetypes: Archetype matrix of shape (n_archetypes, n_features)
-            weights: Weight matrix of shape (n_samples, n_archetypes)
-            X: Data matrix of shape (n_samples, n_features)
+            archetypes: Archetype matrix (n_archetypes, n_features)
+            weights: Weight matrix (n_samples, n_archetypes)
+            X: Data matrix (n_samples, n_features)
 
         Returns:
-            Loss value as a scalar
+            Combined loss value as a scalar
         """
         X_reconstructed = jnp.matmul(weights, archetypes)
         reconstruction_loss = jnp.mean(jnp.sum((X - X_reconstructed) ** 2, axis=1))
         entropy = -jnp.sum(weights * jnp.log(weights + 1e-10), axis=1)
-        entropy_reg = -jnp.mean(entropy)
+        entropy_reg = -jnp.mean(entropy)  # Negated to discourage uniform weights
         lambda_reg = 0.01
         return reconstruction_loss + lambda_reg * entropy_reg
 
@@ -108,41 +133,49 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         """
         Project weights to satisfy simplex constraints with numerical stability.
 
+        Ensures that weights form valid convex combinations (non-negative and sum to 1)
+        while avoiding numerical underflow/overflow issues.
+
         Args:
-            weights: Weight matrix of shape (n_samples, n_archetypes)
+            weights: Weight matrix (n_samples, n_archetypes)
 
         Returns:
-            Projected weight matrix of shape (n_samples, n_archetypes)
+            Projected weight matrix (n_samples, n_archetypes)
         """
         eps = 1e-10
-        weights = jnp.maximum(eps, weights)
+        weights = jnp.maximum(eps, weights)  # Prevent zeros for numerical stability
         sum_weights = jnp.sum(weights, axis=1, keepdims=True)
-        sum_weights = jnp.maximum(eps, sum_weights)
+        sum_weights = jnp.maximum(eps, sum_weights)  # Prevent division by zero
         return weights / sum_weights
 
     def project_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
         """
         Project archetypes using soft assignment based on k-nearest neighbors.
 
+        Ensures archetypes remain within the convex hull of data points by creating
+        soft assignments based on proximity. This approach offers better stability
+        than hard assignment methods.
+
         Args:
-            archetypes: Archetype matrix of shape (n_archetypes, n_features)
-            X: Original data matrix of shape (n_samples, n_features)
+            archetypes: Archetype matrix (n_archetypes, n_features)
+            X: Original data matrix (n_samples, n_features)
 
         Returns:
-            Projected archetype matrix of shape (n_archetypes, n_features)
+            Projected archetype matrix (n_archetypes, n_features)
         """
 
         def _process_archetype(i: int) -> jnp.ndarray:
             archetype_dists = dists[:, i]
             top_k_indices = jnp.argsort(archetype_dists)[:k]
             top_k_dists = archetype_dists[top_k_indices]
-            weights = 1.0 / (top_k_dists + 1e-10)
-            weights = weights / jnp.sum(weights)
+            weights = 1.0 / (top_k_dists + 1e-10)  # Inverse distance weighting
+            weights = weights / jnp.sum(weights)  # Normalize to form convex combination
             projected = jnp.sum(weights[:, jnp.newaxis] * X[top_k_indices], axis=0)
             return projected
 
+        # Calculate pairwise distances between data points and archetypes
         dists = jnp.sum((X[:, jnp.newaxis, :] - archetypes[jnp.newaxis, :, :]) ** 2, axis=2)
-        k = min(10, X.shape[0])
+        k = min(10, X.shape[0])  # Adaptive k to handle small datasets
         projected_archetypes = jnp.stack([_process_archetype(i) for i in range(archetypes.shape[0])])
         return projected_archetypes
 
@@ -150,13 +183,16 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         """
         Fit the model to the data.
 
+        Identifies optimal archetypes and weights through iterative optimization.
+        Uses Adam optimizer with projection steps to ensure constraints are satisfied.
+
         Args:
-            X: Data matrix of shape (n_samples, n_features)
-            normalize: Whether to normalize the data before fitting.
-            **kwargs: Additional keyword arguments for the fit method.
+            X: Data matrix (n_samples, n_features)
+            normalize: Whether to normalize the data before fitting
+            **kwargs: Additional keyword arguments for fine-tuning the fitting process
 
         Returns:
-            Self
+            Self - fitted model instance
         """
         # Preprocess data: scale for improved stability
         X_np = X.values if hasattr(X, "values") else X
@@ -178,7 +214,7 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
         X_jax = jnp.array(X_scaled)
         n_samples, _ = X_jax.shape
 
-        # Debug information
+        # Log key data characteristics for monitoring
         self.logger.info(f"Data shape: {X_jax.shape}")
         self.logger.info(f"Data range: min={jnp.min(X_jax):.4f}, max={jnp.max(X_jax):.4f}")
 

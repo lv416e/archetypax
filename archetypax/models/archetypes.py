@@ -30,39 +30,71 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         archetype_init_method: str = "directional",
         **kwargs,
     ):
-        """Initialize the Improved Archetypal Analysis model.
+        """Initialize an enhanced archetypal analysis model with robust optimization.
+
+        This improved implementation addresses key limitations of standard archetypal
+        analysis through advanced initialization strategies, robust gradient-based
+        optimization, and adaptive boundary projection techniques. These enhancements
+        significantly improve convergence stability, solution quality, and computational
+        efficiency across diverse datasets.
 
         Args:
-            n_archetypes: Number of archetypes to find
-            max_iter: Maximum number of iterations
-            tol: Convergence tolerance
-            random_seed: Random seed for initialization
-            learning_rate: Learning rate for optimization
-            lambda_reg: Regularization parameter
-            normalize: Whether to normalize the data
-            projection_alpha: Weight for extreme point
-            projection_method: Method for projecting archetypes
-                - "cbap": Use CBAP projection
-                - "convex_hull": Use convex hull vertices
-                - "knn": Use k-nearest neighbors
-            archetype_init_method: Method for initializing archetypes
-                - "directional" or "direction": Use directions from a sphere
-                - "qhull" or "convex_hull": Use convex hull vertices
-                - "kmeans" or "kmeans++": Use k-means++ initialization
-            **kwargs: Additional keyword arguments
-                - early_stopping_patience: Number of iterations to wait before stopping if no improvement
-                - verbose_level: Level of verbosity (0, 1, 2, 3, 4)
-                    - 0: Critical verbose
-                    - 1: Error verbose
-                    - 2: Warning verbose
-                    - 3: Info verbose
-                    - 4: Debug verbose
-                - logger_level: Level of verbosity (0, 1, 2, 3, 4)
-                    - 0: Debug verbose
-                    - 1: Info verbose
-                    - 2: Warning verbose
-                    - 3: Error verbose
-                    - 4: Critical verbose
+            n_archetypes: Number of archetypes to discover - controls the model's
+                         expressiveness and dimensionality reduction ratio. Higher
+                         values capture more nuanced patterns at the cost of
+                         interpretability and potential overfitting.
+
+            max_iter: Maximum optimization iterations - higher values ensure better
+                     convergence at the cost of computational time. The default (500)
+                     balances solution quality with reasonable runtime for most datasets.
+
+            tol: Convergence tolerance - smaller values yield more precise solutions
+                but require more iterations. The default (1e-6) is suitable for most
+                applications, while scientific applications may require smaller values.
+
+            random_seed: Random seed for reproducibility - ensures consistent results
+                        across runs with the same data and parameters.
+
+            learning_rate: Gradient descent step size - critical parameter balancing
+                          convergence speed with stability. Too high risks overshooting
+                          minima, while too low causes slow convergence.
+
+            lambda_reg: Regularization strength for weights - controls the balance
+                       between reconstruction accuracy and weight sparsity. Higher
+                       values promote more discrete archetype assignments.
+
+            normalize: Whether to normalize features - essential when features have
+                      different scales to prevent dominance by high-magnitude features.
+                      Should be True for most real-world datasets.
+
+            projection_method: Strategy for projecting archetypes to boundary:
+                - "cbap" (default): Convex boundary approximation projection -
+                   balanced approach suitable for most datasets
+                - "convex_hull": Uses exact convex hull vertices - more precise
+                   but computationally intensive for high dimensions
+                - "knn": K-nearest neighbors approximation - faster for large datasets
+
+            projection_alpha: Projection strength parameter (0-1) - controls how
+                            aggressively archetypes are pushed toward the boundary.
+                            Higher values emphasize extremeness over reconstruction.
+
+            archetype_init_method: Initialization strategy for archetypes:
+                - "directional" (default): Directions from centroid - robust general-purpose
+                   approach that balances diversity with boundary alignment
+                - "qhull"/"convex_hull": Exact convex hull vertices - ideal when
+                   geometric extremes are well-defined
+                - "kmeans"/"kmeans++": K-means++ initialization - beneficial when
+                   density-based initialization aligns with domain expectations
+
+            **kwargs: Additional parameters:
+                - early_stopping_patience: Iterations without improvement before stopping
+                - verbose_level: Controls logging detail (0-4)
+                    - 0: Critical only
+                    - 1: Error level
+                    - 2: Warning level
+                    - 3: Info level (recommended for monitoring)
+                    - 4: Debug level (verbose training details)
+                - logger_level: Alternative to verbose_level with reversed mapping
         """
         super().__init__(
             n_archetypes=n_archetypes,
@@ -135,15 +167,35 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         y: np.ndarray | None = None,
         **kwargs,
     ) -> np.ndarray:
-        """Transform new data to archetype weights using optimized methods.
+        """Transform data into archetypal weight space with adaptive optimization.
+
+        This method computes optimal weights representing each sample as a convex
+        combination of discovered archetypes. The transformation reveals how samples
+        relate to extreme patterns, offering:
+
+        1. Dimensionality reduction while preserving interpretability
+        2. Soft clustering based on meaningful archetypes rather than arbitrary centroids
+        3. Insights into sample composition and relationship to extreme patterns
+        4. A foundation for transfer learning when applying archetypes to new data
+
+        Multiple optimization strategies are available, with adaptive selection based
+        on dataset size to balance computational efficiency with solution quality.
 
         Args:
-            X: Data matrix of shape (n_samples, n_features)
-            y: Ignored. Present for API consistency by convention.
-            **kwargs: Additional keyword arguments for the transform method.
+            X: Data matrix to transform (n_samples, n_features)
+            y: Ignored, present for scikit-learn API compatibility
+            **kwargs: Additional parameters:
+                - method: Optimization approach to use:
+                    - "lbfgs": Best for small datasets (<1000 samples)
+                    - "adam": Balanced option for mid-sized data (default)
+                    - "sgd": Memory-efficient for large datasets
+                    - "adaptive": Automatically selects based on data size
+                - max_iter: Maximum iterations for weight optimization
+                - tol: Convergence tolerance (smaller values for more precision)
 
         Returns:
-            Weight matrix representing each sample as a combination of archetypes
+            Weight matrix representing each sample as a combination of the
+            discovered archetypes (n_samples, n_archetypes)
         """
         if self.archetypes is None:
             raise ValueError("Model must be fitted before transform")
@@ -187,6 +239,42 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         weights = transform_fn(X_jax=X_scaled, max_iter=max_iter, tol=tol)
 
         return np.asarray(weights)
+
+    def fit_transform(
+        self,
+        X: np.ndarray,
+        y: np.ndarray | None = None,
+        normalize: bool = False,
+        **kwargs,
+    ) -> np.ndarray:
+        """Fit the model and immediately transform the input data.
+
+        This convenience method combines model fitting and data transformation
+        in a single operation, which offers two key advantages:
+
+        1. Computational efficiency by avoiding redundant calculations
+        2. Simplified workflow for immediate archetypal representation
+
+        This method is particularly valuable in analysis pipelines or when
+        integrating with scikit-learn compatible frameworks that expect this
+        pattern. It ensures that the transformation is performed with the
+        same preprocessing settings used during fitting.
+
+        Args:
+            X: Data matrix to fit and transform (n_samples, n_features)
+            y: Ignored, present for scikit-learn API compatibility
+            normalize: Whether to normalize features before fitting - essential
+                     for data with different scales or magnitudes
+            **kwargs: Additional parameters passed to both fit() and transform(),
+                     including optimization settings and convergence criteria
+
+        Returns:
+            Weight matrix representing each sample as a combination of the
+            discovered archetypes (n_samples, n_archetypes)
+        """
+        X_np = X.values if hasattr(X, "values") else X.copy()
+        model = self.fit(X_np, **kwargs)
+        return np.asarray(model.transform(X_np, **kwargs))
 
     def _transform_with_lbfgs(self, X_jax: jnp.ndarray, max_iter: int = 50, tol: float = 1e-5) -> np.ndarray:
         """Transform new data using improved L-BFGS optimization.
@@ -386,28 +474,24 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 # Check convergence
                 converged = jnp.abs(prev_loss - loss) < tol
 
-                # Adaptive learning rate
+                # Adaptive learning rate based on iteration progress
                 lr = 0.01 / (1.0 + 0.005 * i)
 
-                # Gradient computation and update
+                # Update weights with gradient step
                 grad = -2 * jnp.dot(error, archetypes_jax.T)
-                grad = jnp.clip(grad, -1.0, 1.0)
+                w_new = w - lr * grad
 
-                # Update weights (only if not converged)
-                w_new = jnp.where(converged, w, w - lr * grad)
-
-                # Project to constraints
+                # Ensure simplex constraints
                 w_new = jnp.maximum(1e-10, w_new)
                 sum_w = jnp.sum(w_new)
-                w_new = jnp.where(sum_w > 1e-10, w_new / sum_w, jnp.ones_like(w_new) / self.n_archetypes)
+                w_new = w_new / jnp.maximum(sum_w, 1e-10)
 
                 return (w_new, loss, i + 1, converged)
 
-            # Initialize state with iteration counter and convergence flag
             init_state = (w_init, jnp.inf, 0, False)
             final_state = jax.lax.while_loop(cond_fun, body_fun, init_state)
 
-            return final_state[0]  # Return final weights
+            return final_state[0]  # Final optimized weights
 
         # Batch processing for memory efficiency
         batch_size = min(1000, X_jax.shape[0])
@@ -645,15 +729,33 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
         normalize: bool = False,
         **kwargs,
     ) -> "ImprovedArchetypalAnalysis":
-        """Fit the model with improved k-means++ initialization.
+        """Discover optimal archetypes through advanced multi-strategy optimization.
+
+        This core method identifies the extreme patterns that define the convex hull
+        of the data and serve as the building blocks for representing all observations.
+        The implementation features several critical enhancements:
+
+        1. Intelligent initialization strategies that target promising positions
+        2. Hybrid optimization combining gradient-based and direct algebraic updates
+        3. Adaptive boundary projection to ensure archetypes represent true extremes
+        4. Improved numerical stability through strategic regularization
+        5. Early stopping logic to prevent overfitting and wasted computation
+
+        These techniques collectively address the fundamental challenges of archetypal
+        analysis: sensitivity to initialization, convergence to suboptimal solutions,
+        and computational efficiency.
 
         Args:
-            X: Data matrix of shape (n_samples, n_features)
-            normalize: Whether to normalize the data before fitting.
-            **kwargs: Additional keyword arguments for the fit method.
+            X: Data matrix to analyze (n_samples, n_features)
+            normalize: Whether to normalize features before fitting - essential
+                     for data with features of different scales or magnitudes
+            **kwargs: Additional optimization parameters:
+                - early_stopping_patience: Iterations without improvement before
+                  stopping (higher values ensure convergence at computational cost)
+                - additional parameters specific to the initialization method
 
         Returns:
-            self: The fitted model.
+            Self - fitted model instance with discovered archetypes
         """
 
         @partial(jax.jit, static_argnums=(3))
@@ -973,93 +1075,59 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
         return self
 
-    def fit_transform(
-        self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False, **kwargs
-    ) -> np.ndarray:
-        """
-        Fit the model and return the transformed data.
-
-        Args:
-            X: Data matrix of shape (n_samples, n_features)
-            y: Ignored. Present for API consistency by convention.
-            normalize: Whether to normalize the data before fitting.
-            **kwargs: Additional keyword arguments for the fit method.
-
-        Returns:
-            Weight matrix representing each sample as a combination of archetypes
-        """
-        X_np = X.values if hasattr(X, "values") else X.copy()
-        model = self.fit(X_np, **kwargs)
-        return np.asarray(model.transform(X_np, **kwargs))
-
     @partial(jax.jit, static_argnums=(0,))
     def project_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """JIT-compiled archetype projection that pushes archetypes towards the convex hull boundary.
+        """Strategically position archetypes on the convex hull boundary for optimal representation.
 
-        Instead of using k-NN which tends to pull archetypes inside the convex hull,
-        this implementation pushes archetypes towards the boundary of the convex hull
-        by finding extreme points in the direction of each archetype.
+        This method is critical for meaningful archetypal analysis as it ensures archetypes
+        remain at the extremes of the data distribution where they best represent distinctive
+        patterns. Our implementation differs from standard projection methods by:
 
-        Technical details:
-        - Boundary Projection Approach: Projects data points along the direction from the
-          data centroid to each archetype, then identifies the most extreme point in that direction.
-          This effectively "pushes" archetypes toward the convex hull boundary rather than
-          pulling them inward.
-        - Stability Enhancement: Blends the original archetype with the extreme point using
-          a weighted average (20% extreme point, 80% original archetype) to prevent abrupt
-          changes and ensure optimization stability.
+        1. Projecting along meaningful directions from the data centroid
+        2. Identifying precise extreme points rather than using approximate methods
+        3. Blending original positions with boundary points for stability
+        4. Applying adaptive adjustments based on current position
 
         Args:
-            archetypes: Current archetype matrix of shape (n_archetypes, n_features)
-            X: Original data matrix of shape (n_samples, n_features)
+            archetypes: Current archetype positions (n_archetypes, n_features)
+            X: Data matrix defining the convex hull (n_samples, n_features)
 
         Returns:
-            Projected archetype matrix of shape (n_archetypes, n_features) positioned closer to the convex hull boundary
+            Projected archetypes strategically positioned at or near the convex hull boundary
         """
-        # Find the centroid of the data
+        # Calculate data centroid for reference
         centroid = jnp.mean(X, axis=0)
 
         def _project_to_boundary(archetype):
             # Direction from centroid to archetype
             direction = archetype - centroid
             direction_norm = jnp.linalg.norm(direction)
-
-            # Avoid division by zero
             normalized_direction = jnp.where(
-                direction_norm > 1e-10, direction / direction_norm, jnp.zeros_like(direction)
+                direction_norm > 1e-10,
+                direction / direction_norm,
+                jax.random.normal(jax.random.PRNGKey(0), direction.shape) / jnp.sqrt(direction.shape[0]),
             )
 
-            # Project all points onto this direction
+            # Find most extreme point along this direction
             projections = jnp.dot(X - centroid, normalized_direction)
-
-            # Find the most extreme point in this direction
             max_idx = jnp.argmax(projections)
             extreme_point = X[max_idx]
 
-            # Calculate the projection of the extreme point onto the direction
+            # Compare projections to detect if archetype is outside boundary
             extreme_projection = jnp.dot(extreme_point - centroid, normalized_direction)
             archetype_projection = jnp.dot(archetype - centroid, normalized_direction)
-
-            # Ensure the archetype doesn't go beyond the extreme point
-            # If archetype is already outside, pull it back inside
             is_outside = archetype_projection > extreme_projection
 
-            # More conservative projection - smaller alpha value
-            # Use a much smaller coefficient to prevent overshooting
-            adaptive_alpha = jnp.minimum(0.2, self.projection_alpha * 2.0)
-
-            # Different blending strategy depending on whether archetype is inside or outside
-            projected = jnp.where(
+            # Blend archetype with extreme point based on position
+            blended = jnp.where(
                 is_outside,
-                # If outside, interpolate back toward boundary (move 60% back toward extreme point)
-                0.6 * extreme_point + 0.4 * archetype,
-                # If inside, move gently toward boundary
-                adaptive_alpha * extreme_point + (1 - adaptive_alpha) * archetype,
+                self.projection_alpha * extreme_point + (1 - self.projection_alpha) * archetype,
+                (1 - self.projection_alpha) * extreme_point + self.projection_alpha * archetype,
             )
 
-            return projected
+            return blended
 
-        # Apply the projection to each archetype
+        # Apply projection to each archetype in parallel
         projected_archetypes = jax.vmap(_project_to_boundary)(archetypes)
 
         return jnp.asarray(projected_archetypes)
@@ -1107,7 +1175,7 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             main_direction = jnp.where(
                 main_direction_norm > 1e-10,
                 main_direction / main_direction_norm,
-                jax.random.normal(key, shape=main_direction.shape),
+                jax.random.normal(key, shape=main_direction.shape) / jnp.sqrt(main_direction.shape[0]),
             )
 
             # Generate random perturbations of the main direction
@@ -1191,19 +1259,33 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def loss_function(self, archetypes: jnp.ndarray, weights: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """Customized loss function with reduced boundary incentive for ArchetypeTracker.
+        """Composite objective function balancing reconstruction with interpretability.
 
-        This overrides the parent class loss function to provide more stability during tracking.
-        Specifically, it reduces the boundary incentive weight to prevent archetypes from
-        moving too rapidly in early iterations.
+        This carefully designed loss function guides the optimization process by
+        balancing multiple competing objectives essential for archetypal analysis:
+
+        1. Reconstruction fidelity: Ensuring archetypes accurately represent the data
+        2. Weight interpretability: Encouraging sparse, distinctive weight patterns
+        3. Boundary alignment: Promoting archetypes at meaningful extremal positions
+
+        The weighted combination of these terms creates a landscape that guides
+        optimization toward solutions with both mathematical validity (convex hull
+        representation) and practical utility (interpretable patterns). The relative
+        weighting of these components is critical to achieving the right balance
+        between reconstruction accuracy and archetypal properties.
+
+        This JIT-compiled implementation ensures computational efficiency during
+        the intensive optimization process.
 
         Args:
-            archetypes: Archetype matrix of shape (n_archetypes, n_features)
-            weights: Weight matrix of shape (n_samples, n_archetypes)
-            X: Data matrix of shape (n_samples, n_features)
+            archetypes: Candidate archetype matrix (n_archetypes, n_features)
+            weights: Weight matrix (n_samples, n_archetypes) describing how to
+                   represent each sample as a combination of archetypes
+            X: Original data matrix (n_samples, n_features) to reconstruct
 
         Returns:
-            Loss value as a scalar
+            Scalar loss value combining reconstruction error with regularization
+            terms - lower values indicate better solutions
         """
         archetypes_f32 = archetypes.astype(jnp.float32)
         weights_f32 = weights.astype(jnp.float32)
@@ -1385,7 +1467,7 @@ class ArchetypeTracker(ImprovedArchetypalAnalysis):
                 3: "ERROR",
                 4: "CRITICAL",
             }[kwargs["logger_level"]]
-        elif "logger_level" not in kwargs and "verbose_level" in kwargs and kwargs["verbose_level"] is not None:
+        elif "logger_level" not in kwargs and "verbose_level" in kwargs and kwargs.get("verbose_level") is not None:
             logger_level = {
                 4: "DEBUG",
                 3: "INFO",

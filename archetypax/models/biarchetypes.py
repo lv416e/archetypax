@@ -1,4 +1,11 @@
-"""Biarchetypal Analysis using JAX."""
+"""Biarchetypal Analysis: Dual-perspective archetype discovery using JAX.
+
+This module implements Biarchetypal Analysis (BA), which extends traditional
+Archetypal Analysis by simultaneously identifying archetypes in both observation
+space (rows) and feature space (columns). This dual-perspective approach enables
+more comprehensive data understanding, revealing patterns that would remain hidden
+in single-direction analysis.
+"""
 
 from functools import partial
 from typing import Any, TypeVar
@@ -16,20 +23,24 @@ T = TypeVar("T", bound=np.ndarray)
 
 
 class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
-    """
-    Biarchetypal Analysis using JAX.
+    """Biarchetypal Analysis for dual-directional pattern discovery.
 
-    This implementation follows the paper "Biarchetype analysis: simultaneous learning
-    of observations and features based on extremes" by Alcacer et al.
+    This implementation extends archetypal analysis to simultaneously identify
+    extreme patterns in both observations (rows) and features (columns), offering
+    a richer understanding of data structure. Traditional archetypal analysis
+    only identifies patterns in observation space, missing crucial feature-level insights.
 
-    Biarchetypal Analysis extends archetype analysis to simultaneously identify archetypes
-    of both observations (rows) and features (columns). It represents the data matrix X as:
-
+    By factorizing the data matrix X as:
     X ≃ alpha·beta·X·theta·gamma
 
-    where:
-    - alpha, beta: Coefficients and archetypes for observations (rows)
-    - theta, gamma: Coefficients and archetypes for features (columns)
+    BA provides several advantages:
+    - Captures both observation-level and feature-level patterns
+    - Enables cross-modal analysis between observations and features
+    - Creates a more compact and interpretable representation via biarchetypes
+    - Reveals latent relationships that single-directional methods cannot detect
+
+    Based on the work by Alcacer et al., "Biarchetype analysis: simultaneous learning
+    of observations and features based on extremes."
     """
 
     def __init__(
@@ -44,19 +55,27 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         lambda_reg: float = 0.01,
         **kwargs,
     ):
-        """
-        Initialize the Biarchetypal Analysis model.
+        """Initialize the Biarchetypal Analysis model.
 
         Args:
-            n_row_archetypes: Number of archetypes for rows (observations)
-            n_col_archetypes: Number of archetypes for columns (features)
-            max_iter: Maximum number of iterations
-            tol: Convergence tolerance
-            random_seed: Random seed for initialization
-            learning_rate: Learning rate for optimizer
-            projection_method: Method for projecting archetypes
-            lambda_reg: Regularization parameter
-            **kwargs: Additional keyword arguments
+            n_row_archetypes: Number of row archetypes - controls expressiveness in
+                             observation space (rows)
+            n_col_archetypes: Number of column archetypes - controls expressiveness in
+                             feature space (columns)
+            max_iter: Maximum optimization iterations - higher values enable better
+                     convergence at computational cost
+            tol: Convergence tolerance for early stopping - smaller values yield more
+                 precise solutions but require more iterations
+            random_seed: Random seed for reproducibility across runs
+            learning_rate: Gradient descent step size - critical balance between
+                          convergence speed and stability
+            projection_method: Method for projecting archetypes to extreme points:
+                              "default" uses convex boundary approximation
+            lambda_reg: Regularization strength - controls sparsity/smoothness tradeoff
+                       in archetype weights
+            **kwargs: Additional parameters including:
+                - early_stopping_patience: Iterations with no improvement before stopping
+                - verbose_level/logger_level: Controls logging detail
         """
         # Initialize using parent class with the row archetypes
         # (we'll handle column archetypes separately)
@@ -124,14 +143,28 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def loss_function(self, params: dict[str, jnp.ndarray], X: jnp.ndarray) -> jnp.ndarray:
-        """Calculate the reconstruction loss for biarchetypal analysis.
+        """Calculate the composite reconstruction loss for biarchetypal factorization.
+
+        This core objective function balances reconstruction quality with sparsity
+        promotion to ensure interpretable representations. Unlike standard AA,
+        the biarchetypal loss operates on a four-factor decomposition, requiring
+        careful numerical handling to prevent instability during optimization.
+
+        The loss promotes three key properties:
+        1. Accurate data reconstruction through the biarchetypal representation
+        2. Sparse coefficients for interpretable patterns
+        3. Numerical stability through explicit type control
 
         Args:
-            params: Dictionary containing alpha, beta, theta, gamma
-            X: Data matrix of shape (n_samples, n_features)
+            params: Dictionary containing the four model matrices:
+                - alpha: Row coefficients (n_samples, n_row_archetypes)
+                - beta: Row archetypes (n_row_archetypes, n_samples)
+                - theta: Column archetypes (n_features, n_col_archetypes)
+                - gamma: Column coefficients (n_col_archetypes, n_features)
+            X: Data matrix (n_samples, n_features)
 
         Returns:
-            Loss value
+            Combined loss value incorporating reconstruction and regularization terms
         """
         # Convert to float32 for better numerical stability
         alpha = params["alpha"].astype(jnp.float32)  # (n_samples, n_row_archetypes)
@@ -148,11 +181,9 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         # Calculate the reconstruction error (element-wise MSE)
         reconstruction_loss = jnp.mean(jnp.sum((X_f32 - reconstruction) ** 2, axis=1))
 
-        # Add regularization to encourage sparsity
-        # Note: We want to MINIMIZE entropy to encourage sparsity
-        # So we use positive entropy (not negative) in the loss function
-        alpha_entropy = jnp.sum(alpha * jnp.log(alpha + 1e-10), axis=1)  # Removed negative sign
-        gamma_entropy = jnp.sum(gamma * jnp.log(gamma + 1e-10), axis=0)  # Removed negative sign
+        # Add regularization to encourage sparsity by minimizing entropy
+        alpha_entropy = jnp.sum(alpha * jnp.log(alpha + 1e-10), axis=1)  # Higher values promote sparsity
+        gamma_entropy = jnp.sum(gamma * jnp.log(gamma + 1e-10), axis=0)  # Higher values promote sparsity
         entropy_reg = jnp.mean(alpha_entropy) + jnp.mean(gamma_entropy)
 
         return (reconstruction_loss - self.lambda_reg * entropy_reg).astype(jnp.float32)
@@ -161,11 +192,22 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
     def project_row_coefficients(self, coefficients: jnp.ndarray) -> jnp.ndarray:
         """Project row coefficients to satisfy simplex constraints.
 
+        This projection is essential for maintaining valid convex combinations
+        in the observation space. The simplex constraint (non-negative weights
+        summing to 1) ensures that each data point is represented as a proper
+        weighted combination of row archetypes. Without this constraint, the
+        model would lose its interpretability and might generate unrealistic
+        representations.
+
+        The implementation includes numerical safeguards to prevent division by zero
+        and ensure stable optimization even with extreme weight values.
+
         Args:
-            coefficients: Coefficient matrix (n_samples, n_row_archetypes)
+            coefficients: Row coefficient matrix (n_samples, n_row_archetypes)
 
         Returns:
-            Projected coefficient matrix
+            Projected coefficients satisfying simplex constraints
+            (non-negative, sum to 1)
         """
         eps = 1e-10
         coefficients = jnp.maximum(eps, coefficients)
@@ -177,11 +219,20 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
     def project_col_coefficients(self, coefficients: jnp.ndarray) -> jnp.ndarray:
         """Project column coefficients to satisfy simplex constraints.
 
+        This projection enforces valid convex combinations in the feature space,
+        which differs critically from row coefficient projection. Feature weights
+        must sum to 1 across columns (not rows), ensuring each feature is properly
+        represented by column archetypes.
+
+        This axis-specific projection is a key distinction between standard AA and
+        biarchetypal analysis, enabling the dual-directional nature of the model.
+
         Args:
-            coefficients: Coefficient matrix (n_col_archetypes, n_features)
+            coefficients: Column coefficient matrix (n_col_archetypes, n_features)
 
         Returns:
-            Projected coefficient matrix
+            Projected coefficients with each feature's weights summing to 1,
+            maintaining valid convex combinations in feature space
         """
         eps = 1e-10
         coefficients = jnp.maximum(eps, coefficients)
@@ -191,14 +242,26 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def project_row_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """Project row archetypes to the convex hull of data points.
+        """Project row archetypes to the convex hull boundary of data points.
+
+        This critical operation ensures row archetypes remain at meaningful extremes
+        of the observation space, where they represent distinct, interpretable patterns.
+        Without this projection, archetypes would tend to collapse toward the data
+        centroid during optimization, losing their representative power.
+
+        The implementation uses an adaptive multi-point boundary approximation that:
+        1. Identifies extreme directions from the data centroid
+        2. Selects multiple boundary points along each direction
+        3. Creates weighted combinations that maximize distinctiveness
+        4. Maintains numeric stability throughout the process
 
         Args:
-            archetypes: Archetype matrix of shape (n_row_archetypes, n_samples)
-            X: Data matrix of shape (n_samples, n_features)
+            archetypes: Row archetype matrix (n_row_archetypes, n_samples)
+            X: Data matrix (n_samples, n_features)
 
         Returns:
-            Projected archetypes
+            Projected row archetypes positioned at meaningful boundaries
+            of the data's convex hull
         """
         # Calculate the data centroid as our reference point
         centroid = jnp.mean(X, axis=0)  # Shape: (n_features,)
@@ -209,8 +272,6 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             weighted_representation = jnp.matmul(archetype, X)  # Shape: (n_features,)
             direction = weighted_representation - centroid
             direction_norm = jnp.linalg.norm(direction)
-
-            # Ensure numerical stability with proper normalization
             normalized_direction = jnp.where(
                 direction_norm > 1e-10,
                 direction / direction_norm,
@@ -222,11 +283,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
             # Step 3: Find multiple extreme points with adaptive k selection
             k = min(5, X.shape[0] // 10 + 2)  # Adaptive k based on dataset size
-
-            # Get indices of the k most extreme points
             top_k_indices = jnp.argsort(projections)[-k:]
-
-            # Get the projection values for these extreme points
             top_k_projections = projections[top_k_indices]
 
             # Step 4: Calculate weights with emphasis on the most extreme points
@@ -261,14 +318,30 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def project_col_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """Project column archetypes to the convex hull of the transposed data.
+        """Project column archetypes to the boundary of the feature space.
+
+        This critical counterpart to row archetype projection ensures column archetypes
+        represent distinct feature patterns. While conceptually similar to row projection,
+        this operation works in the transposed space, treating features as observations
+        and finding extremes among them.
+
+        Without this specialized projection, the feature archetypes would not capture
+        meaningful feature combinations, undermining the dual-perspective advantage
+        of biarchetypal analysis.
+
+        The implementation:
+        1. Transposes the problem to work in feature space
+        2. Identifies feature combinations that represent extremes
+        3. Creates boundary points through weighted feature combinations
+        4. Maintains numerical stability throughout
 
         Args:
-            archetypes: Archetype matrix of shape (n_features, n_col_archetypes)
-            X: Data matrix of shape (n_samples, n_features)
+            archetypes: Column archetype matrix (n_features, n_col_archetypes)
+            X: Data matrix (n_samples, n_features)
 
         Returns:
-            Projected archetypes
+            Projected column archetypes positioned at the boundaries of feature space,
+            representing distinct feature patterns
         """
         # Transpose X to work with features as data points in feature space
         X_T = X.T  # Shape: (n_features, n_samples)
@@ -282,8 +355,6 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             weighted_features = archetype[:, jnp.newaxis] * X_T  # Shape: (n_features, n_samples)
             direction = jnp.sum(weighted_features, axis=0) - centroid  # Shape: (n_samples,)
             direction_norm = jnp.linalg.norm(direction)
-
-            # Ensure numerical stability with proper normalization
             normalized_direction = jnp.where(
                 direction_norm > 1e-10,
                 direction / direction_norm,
@@ -295,11 +366,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
 
             # Step 3: Find multiple extreme features with adaptive k selection
             k = min(5, X.shape[1] // 10 + 2)  # Adaptive k based on feature space size
-
-            # Get indices of the k most extreme features
             top_k_indices = jnp.argsort(projections)[-k:]
-
-            # Get the projection values for these extreme features
             top_k_projections = projections[top_k_indices]
 
             # Step 4: Calculate weights with emphasis on the most extreme features
@@ -334,16 +401,29 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return jnp.asarray(projected_archetypes.T)
 
     def fit(self, X: np.ndarray, normalize: bool = False, **kwargs) -> "BiarchetypalAnalysis":
-        """
-        Fit the Biarchetypal Analysis model to the data.
+        """Fit the Biarchetypal Analysis model to identify dual-perspective archetypes.
+
+        This core method performs the four-factor decomposition of the data matrix,
+        simultaneously discovering patterns in observation and feature spaces.
+        The implementation employs advanced optimization strategies including:
+
+        1. Sophisticated initialization for both row and column factors
+        2. Adaptive learning rate scheduling for stable convergence
+        3. Specialized projection operations to maintain meaningful boundaries
+        4. Careful numerical handling to prevent instability
+        5. Early stopping with convergence monitoring
+
+        These optimizations are essential due to the complexity of the four-factor model,
+        which is more challenging to optimize than standard Archetypal Analysis.
 
         Args:
-            X: Data matrix of shape (n_samples, n_features)
-            normalize: Whether to normalize the data before fitting
-            **kwargs: Additional keyword arguments for the fit method.
+            X: Data matrix (n_samples, n_features)
+            normalize: Whether to normalize features - essential for data with
+                      different scales
+            **kwargs: Additional parameters for customizing the fitting process
 
         Returns:
-            Self
+            Self - fitted model instance with discovered biarchetypes
         """
         X_np = X.values if hasattr(X, "values") else X
 
@@ -365,7 +445,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         X_jax = jnp.array(X_scaled, dtype=jnp.float32)
         n_samples, n_features = X_jax.shape
 
-        # Debug information
+        # Log key data characteristics and model configuration
         self.logger.info(f"Data shape: {X_jax.shape}")
         self.logger.info(f"Data range: min={float(jnp.min(X_jax)):.4f}, max={float(jnp.max(X_jax)):.4f}")
         self.logger.info(f"Row archetypes: {self.n_row_archetypes}")
@@ -539,21 +619,17 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         ) -> tuple[dict[str, jnp.ndarray], optax.OptState, jnp.ndarray]:
             """Execute a single optimization step."""
 
-            # Loss function
+            # Loss function for current parameters
             def loss_fn(params):
                 return self.loss_function(params, X)
 
-            # Calculate gradient and update with value_and_grad for efficiency
+            # Compute gradients and update parameters
             loss, grads = jax.value_and_grad(loss_fn)(params)
-
-            # Apply gradient clipping to prevent NaNs
             grads = jax.tree.map(lambda g: jnp.clip(g, -1.0, 1.0), grads)
-
-            # Get new parameters
             updates, opt_state = optimizer.update(grads, opt_state, params)
             new_params = optax.apply_updates(params, updates)
 
-            # Project to constraints
+            # Maintain simplex constraints
             new_params["alpha"] = self.project_row_coefficients(new_params["alpha"])
             new_params["gamma"] = self.project_col_coefficients(new_params["gamma"])
 
@@ -598,32 +674,29 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                 # Record loss
                 self.loss_history.append(loss_value)
 
-                # Check convergence with sophisticated adaptive criterion
-                if it > 0:
-                    # Calculate relative improvement over the last iteration
-                    rel_improvement = (prev_loss - loss_value) / (prev_loss + 1e-10)
+                # Track loss and display progress
+                self.logger.info(f"Iteration {it}, Loss: {loss_value:.6f}")
 
-                    # Calculate moving average of recent losses if we have enough history
-                    window_size = min(10, len(self.loss_history))
-                    if window_size >= 5:
-                        recent_losses = self.loss_history[-window_size:]
-                        moving_avg = sum(recent_losses) / window_size
-                        # Calculate relative improvement over the moving average
-                        avg_improvement = (moving_avg - loss_value) / (moving_avg + 1e-10)
+                # Evaluate convergence using both immediate and moving average improvements
+                relative_improvement = (prev_loss - loss_value) / (prev_loss + 1e-10)
 
-                        # Converge if both short-term and long-term improvements are small
-                        if 0 <= rel_improvement < self.tol and 0 <= avg_improvement < self.tol * 2:
-                            self.logger.info(f"Converged at iteration {it}")
-                            self.logger.info(f"  - Relative improvement: {rel_improvement:.8f}")
-                            self.logger.info(f"  - Average improvement: {avg_improvement:.8f}")
-                            break
-                    else:
-                        # Fall back to simple criterion for early iterations
-                        if 0 <= rel_improvement < self.tol:
-                            self.logger.info(
-                                f"Early convergence at iteration {it} with relative improvement {rel_improvement:.8f}"
-                            )
-                            break
+                # Tracking using moving average for stable convergence detection
+                if it >= 10:
+                    recent_losses = self.loss_history[-10:]
+                    loss_ma = sum(recent_losses) / 10
+                    # Use initial loss as reference if no previous MA exists
+                    if "loss_ma_prev" not in locals():
+                        loss_ma_prev = self.loss_history[0]
+                    relative_ma_improvement = (loss_ma_prev - loss_ma) / (loss_ma_prev + 1e-10)
+                    loss_ma_prev = loss_ma
+                else:
+                    relative_ma_improvement = relative_improvement
+                    loss_ma_prev = prev_loss  # Initialize for future iterations
+
+                # Check combined convergence criteria
+                if it > 20 and relative_improvement < self.tol and relative_ma_improvement < self.tol:
+                    self.logger.info(f"Converged at iteration {it}")
+                    break
 
                 prev_loss = loss_value
 
@@ -634,7 +707,7 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
                         avg_last_5 = sum(self.loss_history[-min(5, len(self.loss_history)) :]) / min(
                             5, len(self.loss_history)
                         )
-                        improvement_rate = (self.loss_history[0] - loss_value) / (i + 1) if i > 0 else 0
+                        improvement_rate = (self.loss_history[0] - loss_value) / (it + 1) if it > 0 else 0
                         self.logger.info(
                             get_message(
                                 "progress",
@@ -706,16 +779,25 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return self
 
     def transform(self, X: np.ndarray, y: np.ndarray | None = None, **kwargs) -> Any:
-        """
-        Transform new data to row and column archetype weights.
+        """Transform new data into dual-directional archetype space.
+
+        This method computes optimal weights to represent new data in terms of
+        discovered archetypes, enabling consistent interpretation of new observations
+        within the established biarchetypal framework.
+
+        Unlike conventional AA, this transform operates in both row and column spaces,
+        providing a holistic representation of new data that preserves the model's
+        dual-perspective advantage. The implementation efficiently leverages pre-trained
+        biarchetypes to avoid redundant computation.
 
         Args:
-            X: New data matrix of shape (n_samples, n_features)
-            y: Ignored. Present for API consistency by convention.
-            **kwargs: Additional keyword arguments for the transform method.
+            X: New data matrix (n_samples, n_features) to transform
+            y: Ignored. Present for scikit-learn API compatibility
+            **kwargs: Additional parameters for customizing transformation
 
         Returns:
-            Tuple of (row_weights, col_weights) representing the data in terms of archetypes
+            Tuple of (row_weights, col_weights) representing the data in the
+            biarchetypal space
         """
         if self.alpha is None or self.beta is None or self.theta is None or self.gamma is None:
             raise ValueError("Model must be fitted before transform")
@@ -765,17 +847,26 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return result
 
     def fit_transform(self, X: np.ndarray, y: np.ndarray | None = None, normalize: bool = False, **kwargs) -> Any:
-        """
-        Fit the model and transform the data.
+        """Fit the model and transform the data in a single operation.
+
+        This convenience method combines model fitting and data transformation
+        in a single step, offering two key advantages:
+        1. Computational efficiency by avoiding redundant calculations
+        2. Simplified workflow for immediate biarchetypal representation
+
+        The method is particularly valuable when the biarchetypal representation
+        is needed immediately after fitting, such as in analysis pipelines or
+        when integrating with scikit-learn compatible frameworks.
 
         Args:
-            X: Data matrix
-            y: Target values (ignored)
-            normalize: Whether to normalize the data
-            **kwargs: Additional keyword arguments for the fit_transform method.
+            X: Data matrix to fit and transform (n_samples, n_features)
+            y: Ignored. Present for scikit-learn API compatibility
+            normalize: Whether to normalize features before fitting
+            **kwargs: Additional parameters passed to fit()
 
         Returns:
-            Tuple of (row_weights, col_weights)
+            Tuple of (row_weights, col_weights) representing the data in
+            biarchetypal space
         """
         X_np = X.values if hasattr(X, "values") else X
         self.fit(X_np, normalize=normalize)
@@ -783,14 +874,24 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return np.asarray(alpha), np.asarray(gamma)
 
     def reconstruct(self, X: np.ndarray | None = None) -> np.ndarray:
-        """
-        Reconstruct data from biarchetypes.
+        """Reconstruct data from biarchetypal representation.
+
+        This method provides the inverse operation of transform(), reconstructing
+        data points from their biarchetypal weights. This capability serves several
+        critical purposes:
+
+        1. Validation of model quality through reconstruction error assessment
+        2. Interpretation of what specific archetypes represent in data space
+        3. Generation of synthetic data by manipulating archetype weights
+        4. Noise reduction by reconstructing data through dominant archetypes
+
+        The method handles both original training data and new data points.
 
         Args:
-            X: Optional data matrix to reconstruct. If None, uses the training data.
+            X: Optional data matrix to reconstruct. If None, uses the training data
 
         Returns:
-            Reconstructed data matrix
+            Reconstructed data matrix in the original feature space
         """
         if X is not None:
             # Transform new data and reconstruct
@@ -814,11 +915,18 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return np.asarray(reconstructed)
 
     def get_biarchetypes(self) -> np.ndarray:
-        """
-        Get the biarchetypes matrix.
+        """Retrieve the core biarchetypes matrix.
+
+        The biarchetypes matrix (Z = β·X·θ) represents the heart of the model,
+        capturing the essential patterns at the intersection of row and column archetypes.
+        This matrix provides a compact representation of the data's underlying structure,
+        with each element representing a specific row-column archetype interaction.
+
+        Access to this matrix is essential for visualization, interpretation, and
+        advanced analysis of the identified patterns.
 
         Returns:
-            Biarchetypes matrix of shape (n_row_archetypes, n_col_archetypes)
+            Biarchetypes matrix (n_row_archetypes, n_col_archetypes)
         """
         if self.biarchetypes is None:
             raise ValueError("Model must be fitted before getting biarchetypes")
@@ -826,11 +934,18 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return self.biarchetypes
 
     def get_row_archetypes(self) -> np.ndarray:
-        """
-        Get the row archetypes.
+        """Retrieve the row archetypes.
+
+        Row archetypes represent extreme patterns in observation space, describing
+        distinctive types of data points. These archetypes are essential for
+        understanding the primary modes of variation among observations and provide
+        the foundation for interpreting data point weights.
+
+        In the biarchetypal model, row archetypes are projections of the data matrix
+        via the beta coefficients (β·X).
 
         Returns:
-            Row archetypes matrix
+            Row archetypes matrix (n_row_archetypes, n_features)
         """
         if self.archetypes is None:
             raise ValueError("Model must be fitted before getting row archetypes")
@@ -838,11 +953,18 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return self.archetypes
 
     def get_col_archetypes(self) -> np.ndarray:
-        """
-        Get the column archetypes.
+        """Retrieve the column archetypes.
+
+        Column archetypes represent extreme patterns in feature space, describing
+        distinctive feature combinations or "feature types." This perspective is
+        unique to biarchetypal analysis and provides crucial insights about feature
+        relationships that would be missed in standard archetypal analysis.
+
+        These archetypes enable feature-level interpretations and can reveal
+        coordinated feature behaviors across different data contexts.
 
         Returns:
-            Column archetypes matrix
+            Column archetypes matrix (n_col_archetypes, n_features)
         """
         if self.theta is None or self.gamma is None:
             raise ValueError("Model must be fitted before getting column archetypes")
@@ -860,11 +982,21 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
             return col_archetypes
 
     def get_row_weights(self) -> np.ndarray:
-        """
-        Get the row weights (alpha).
+        """Retrieve the row coefficients (alpha).
+
+        Row weights represent how each data point is composed as a mixture of
+        row archetypes. These weights are essential for:
+
+        1. Understanding which archetype patterns dominate each observation
+        2. Clustering similar observations based on their archetype compositions
+        3. Detecting anomalies as points with unusual archetype weights
+        4. Creating reduced-dimension visualizations based on archetype space
+
+        The weights are constrained to be non-negative and sum to 1 (simplex constraint),
+        making them directly interpretable as proportions.
 
         Returns:
-            Row weights matrix
+            Row weight matrix (n_samples, n_row_archetypes)
         """
         if self.alpha is None:
             raise ValueError("Model must be fitted before getting row weights")
@@ -872,11 +1004,21 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return self.alpha
 
     def get_col_weights(self) -> np.ndarray:
-        """
-        Get the column weights (gamma).
+        """Retrieve the column coefficients (gamma).
+
+        Column weights represent how each feature is composed as a mixture of
+        column archetypes. These weights provide unique insights into:
+
+        1. Which feature patterns are expressed in each original feature
+        2. How features group together based on shared archetype influence
+        3. Feature importance through the lens of archetypal patterns
+        4. Potential redundancies in the feature space
+
+        This feature-space perspective is a distinguishing advantage of biarchetypal
+        analysis compared to standard archetypal methods.
 
         Returns:
-            Column weights matrix
+            Column weight matrix (n_col_archetypes, n_features)
         """
         if self.gamma is None:
             raise ValueError("Model must be fitted before getting column weights")
@@ -884,19 +1026,29 @@ class BiarchetypalAnalysis(ImprovedArchetypalAnalysis):
         return self.gamma
 
     def get_all_archetypes(self) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Get both row and column archetypes.
+        """Retrieve both row and column archetypes in a single call.
+
+        This convenience method provides access to both directions of archetypal
+        analysis simultaneously, facilitating comprehensive analysis and visualization
+        of the dual-perspective patterns. Accessing both archetypes together is
+        particularly valuable for cross-modal analysis examining relationships
+        between observation patterns and feature patterns.
 
         Returns:
-            Tuple of (row_archetypes, column_archetypes)
+            Tuple of (row_archetypes, column_archetypes) matrices
         """
         return self.get_row_archetypes(), self.get_col_archetypes()
 
     def get_all_weights(self) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Get both row and column weights.
+        """Retrieve both row and column weights in a single call.
+
+        This convenience method provides access to all weight coefficients
+        simultaneously, enabling comprehensive analysis of how observations
+        and features relate to their respective archetypes. This unified view
+        is particularly valuable for understanding the full biarchetypal
+        decomposition and how information flows between the row and column spaces.
 
         Returns:
-            Tuple of (row_weights, column_weights)
+            Tuple of (row_weights, column_weights) matrices
         """
         return self.get_row_weights(), self.get_col_weights()
