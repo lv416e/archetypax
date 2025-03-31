@@ -1,4 +1,18 @@
-"""Evaluation metrics for Archetypal Analysis."""
+"""Quantitative assessment tools for archetypal model validity and performance.
+
+This module provides specialized metrics and visualizations for evaluating archetypal
+analysis results. These tools address the critical gap between model fitting and
+quality verification by offering:
+
+1. Objective quantification of model performance across multiple dimensions
+2. Statistical validation of archetype meaningfulness and separation
+3. Specialized measures for interpretability and representational quality
+4. Comparative frameworks for model selection and hyperparameter tuning
+
+These capabilities are essential for ensuring model reliability, selecting optimal
+configurations, and providing confidence in derived insights - particularly in
+scientific, business intelligence, and decision support applications.
+"""
 
 import math  # Import math module for factorial function
 from typing import Any
@@ -16,18 +30,35 @@ from ..models.base import ArchetypalAnalysis
 
 
 class ArchetypalAnalysisEvaluator:
-    """
-    Evaluator for Archetypal Analysis results, especially for high-dimensional data.
+    """Comprehensive evaluation suite for validating archetypal analysis quality.
 
-    Provides metrics and visualizations to assess model quality.
+    This class provides specialized metrics and visualizations for assessing model
+    performance across multiple critical dimensions. Rather than relying on a single
+    metric, it offers a holistic evaluation approach that examines:
+
+    - Reconstruction fidelity and information preservation
+    - Archetype distinctiveness and interpretability
+    - Geometric properties of the archetype simplex
+    - Clustering quality and pattern discovery effectiveness
+    - Feature utilization patterns and importance distributions
+
+    This multi-faceted assessment is essential for model validation, hyperparameter
+    tuning, and ensuring that the archetypal representation provides meaningful
+    insights into the underlying data structure.
     """
 
     def __init__(self, model: ArchetypalAnalysis):
-        """
-        Initialize the evaluator.
+        """Initialize the evaluator with a fitted archetypal model.
+
+        Sets up the evaluation framework by extracting and caching key model
+        properties needed for efficient metric calculation. These properties
+        include archetype configurations, weight distributions, and dominant
+        archetype assignments that will be used across multiple evaluation
+        methods.
 
         Args:
-            model: Fitted ArchetypalAnalysis model
+            model: Fitted ArchetypalAnalysis model with discovered archetypes
+                  and calculated weights
         """
         self.model = model
         if model.archetypes is None or model.weights is None:
@@ -39,15 +70,30 @@ class ArchetypalAnalysisEvaluator:
         self.dominant_archetypes = np.argmax(model.weights, axis=1)
 
     def reconstruction_error(self, X: np.ndarray, metric: str = "frobenius") -> float:
-        """
-        Calculate the reconstruction error of the model.
+        """Quantify how accurately the model reproduces the original data.
+
+        This fundamental metric measures the information loss between original
+        data and its archetypal reconstruction. The reconstruction error serves
+        several critical purposes:
+
+        - Validating that the model captures essential data patterns
+        - Comparing different archetype counts for optimal complexity
+        - Identifying potential overfitting or underfitting
+        - Providing an objective basis for model selection
+
+        The implementation offers multiple error metrics to accommodate different
+        sensitivity needs and statistical preferences.
 
         Args:
-            X: Data matrix
-            metric: Error metric to use ('frobenius', 'mae', 'mse', or 'relative')
+            X: Original data matrix to reconstruct
+            metric: Error calculation method:
+                   'frobenius' - Matrix norm (sensitive to outliers)
+                   'mae' - Mean absolute error (more robust)
+                   'mse' - Mean squared error (standard in many contexts)
+                   'relative' - Normalized by data magnitude (for comparison)
 
         Returns:
-            Reconstruction error value
+            Calculated reconstruction error (lower values indicate better fit)
         """
         X_reconstructed = self.model.reconstruct()
 
@@ -62,23 +108,30 @@ class ArchetypalAnalysisEvaluator:
             return float(np.mean((X - X_reconstructed) ** 2))
         elif metric == "relative":
             # Relative error
-            return float(
-                np.linalg.norm(X - X_reconstructed, ord="fro") / np.linalg.norm(X, ord="fro")
-            )
+            return float(np.linalg.norm(X - X_reconstructed, ord="fro") / np.linalg.norm(X, ord="fro"))
         else:
-            raise ValueError(
-                f"Unknown metric: {metric}. Use 'frobenius', 'mae', 'mse', or 'relative'."
-            )
+            raise ValueError(f"Unknown metric: {metric}. Use 'frobenius', 'mae', 'mse', or 'relative'.")
 
     def explained_variance(self, X: np.ndarray) -> float:
-        """
-        Calculate the explained variance of the model.
+        """Measure the proportion of data variance captured by the archetypal model.
+
+        This intuitive metric expresses model quality as a percentage of total
+        data variation explained, similar to PCA's explained variance ratio.
+        This perspective offers several advantages:
+
+        - Provides an easily interpretable score between 0-1
+        - Enables direct comparison with other dimensionality reduction methods
+        - Helps determine if the chosen number of archetypes is sufficient
+        - Indicates whether important patterns have been missed
+
+        Higher values indicate that the archetypal representation captures
+        more of the information present in the original data.
 
         Args:
-            X: Data matrix
+            X: Original data matrix for variance calculation
 
         Returns:
-            Explained variance (0-1)
+            Explained variance ratio (0-1, higher values indicate better fit)
         """
         X_reconstructed = self.model.reconstruct(X)
 
@@ -94,11 +147,25 @@ class ArchetypalAnalysisEvaluator:
         return float(explained_var)
 
     def dominant_archetype_purity(self) -> dict[str, Any]:
-        """
-        Analyze how dominant each archetype is for its assigned samples.
+        """Analyze how distinctly samples associate with their primary archetypes.
+
+        This metric quantifies how uniquely each sample is represented by a single
+        archetype rather than being a mixture of many. High purity indicates that:
+
+        - Archetypes represent distinct, well-separated patterns in the data
+        - Samples can be meaningfully assigned to specific archetypes
+        - The model has discovered genuine structure rather than arbitrary positions
+        - Classification and interpretation of new samples will be more reliable
+
+        Low purity suggests overlapping archetypes or that more archetypes may
+        be needed to represent the data's inherent structure.
 
         Returns:
-            Dictionary with purity metrics
+            Dictionary with purity metrics including:
+            - Per-archetype purity scores
+            - Overall dataset purity
+            - Purity variation statistics
+            - Raw maximum weight values
         """
         if self.model.weights is None:
             raise ValueError("Model must be fitted before evaluating purity")
@@ -129,11 +196,26 @@ class ArchetypalAnalysisEvaluator:
         }
 
     def archetype_separation(self) -> dict[str, float]:
-        """
-        Measure how well-separated the archetypes are.
+        """Measure the geometric distinctiveness between discovered archetypes.
+
+        This metric quantifies how well-separated archetypes are in feature space,
+        which is crucial for interpretability and meaningful pattern detection.
+        Well-separated archetypes indicate:
+
+        - Clear differentiation between discovered patterns
+        - Minimal redundancy in the archetypal representation
+        - Stronger interpretability of what each archetype represents
+        - More robust and stable optimization results
+
+        Poor separation suggests potential issues like local minima traps,
+        excessive archetypes, or inherent pattern similarity in the data.
 
         Returns:
-            Dictionary with separation metrics
+            Dictionary with separation metrics including:
+            - Minimum distance between any two archetypes
+            - Maximum pairwise distance in the set
+            - Average inter-archetype distance
+            - Ratio of minimum to maximum distance (uniformity measure)
         """
         # Calculate all pairwise distances between archetypes
         archetype_distances = cdist(self.model.archetypes, self.model.archetypes)
@@ -154,14 +236,27 @@ class ArchetypalAnalysisEvaluator:
         }
 
     def clustering_metrics(self, X: np.ndarray) -> dict[str, float]:
-        """
-        Calculate clustering quality metrics by using dominant archetypes as cluster assignments.
+        """Evaluate the archetypes' effectiveness as cluster centroids.
+
+        This analysis bridges archetypal analysis with clustering by treating
+        dominant archetype assignments as cluster memberships. This perspective
+        provides critical insights into:
+
+        - How well archetypes identify natural groupings in the data
+        - The coherence of samples dominated by the same archetype
+        - Separation between different archetype-defined groups
+        - The comparative quality versus traditional clustering techniques
+
+        These metrics help validate that archetypes not only reconstruct the
+        data accurately but also discover meaningful structural patterns.
 
         Args:
-            X: Original data matrix
+            X: Original data matrix for clustering evaluation
 
         Returns:
-            Dictionary with clustering metrics
+            Dictionary with clustering quality metrics:
+            - Silhouette score (higher values indicate better-defined clusters)
+            - Davies-Bouldin index (lower values indicate better separation)
         """
         # Need at least 2 archetypes and more samples than archetypes
         if self.n_archetypes < 2 or X.shape[0] <= self.n_archetypes:
@@ -180,11 +275,23 @@ class ArchetypalAnalysisEvaluator:
             return {"silhouette": np.nan, "davies_bouldin": np.nan}
 
     def archetype_feature_importance(self) -> pd.DataFrame:
-        """
-        Analyze which features are most important for each archetype.
+        """Identify which features define and distinguish each archetype.
+
+        This analysis reveals the characteristic features that make each archetype
+        unique, translating abstract archetypes into interpretable patterns.
+        Understanding feature importance enables:
+
+        - Interpretation of what each archetype represents in domain terms
+        - Identification of defining characteristics for each extreme pattern
+        - Feature selection based on archetypal relevance
+        - Targeted analysis of specific variables driving pattern differences
+
+        The resulting feature importance profiles are essential for deriving
+        actionable insights and explaining archetypal patterns to stakeholders.
 
         Returns:
-            DataFrame with feature importance for each archetype
+            DataFrame with normalized feature importance scores for each archetype,
+            where higher absolute values indicate more distinctive usage
         """
         # Get archetypes
         archetypes = self.model.archetypes
@@ -332,9 +439,7 @@ class ArchetypalAnalysisEvaluator:
 
         return hull_metrics
 
-    def plot_convex_hull(
-        self, feature_indices: list[int] | None = None, figsize: tuple[int, int] = (10, 8)
-    ) -> None:
+    def plot_convex_hull(self, feature_indices: list[int] | None = None, figsize: tuple[int, int] = (10, 8)) -> None:
         """
         Plot the convex hull formed by archetypes in 2D or 3D.
 
@@ -351,9 +456,7 @@ class ArchetypalAnalysisEvaluator:
             feature_indices = [0, 1, 2] if archetypes.shape[1] >= 3 else [0, 1]
 
         if len(feature_indices) not in [2, 3]:
-            raise ValueError(
-                "feature_indices must contain 2 or 3 feature indices for 2D or 3D visualization"
-            )
+            raise ValueError("feature_indices must contain 2 or 3 feature indices for 2D or 3D visualization")
 
         selected_archetypes = archetypes[:, feature_indices]
 
@@ -535,9 +638,7 @@ class ArchetypalAnalysisEvaluator:
 
         # Rename columns if feature names provided
         if feature_names is not None and len(feature_names) == self.n_features:
-            importance_df = pd.DataFrame(
-                importance_df.values, index=importance_df.index, columns=feature_names
-            )
+            importance_df = pd.DataFrame(importance_df.values, index=importance_df.index, columns=feature_names)
 
         plt.figure(figsize=(12, 8))
         sns.heatmap(importance_df, cmap="viridis", annot=True)
@@ -547,9 +648,7 @@ class ArchetypalAnalysisEvaluator:
         plt.tight_layout()
         plt.show()
 
-    def plot_archetype_feature_comparison(
-        self, top_n: int = 5, feature_names: list[str] | None = None
-    ) -> None:
+    def plot_archetype_feature_comparison(self, top_n: int = 5, feature_names: list[str] | None = None) -> None:
         """
         Plot radar chart or bar chart comparing top N most important features for each archetype.
 
@@ -561,9 +660,7 @@ class ArchetypalAnalysisEvaluator:
 
         # Rename columns if feature names provided
         if feature_names is not None and len(feature_names) == self.n_features:
-            importance_df = pd.DataFrame(
-                importance_df.values, index=importance_df.index, columns=feature_names
-            )
+            importance_df = pd.DataFrame(importance_df.values, index=importance_df.index, columns=feature_names)
 
         # For each archetype, get the top N most important features
         plt.figure(figsize=(15, 4 * ((self.n_archetypes + 1) // 2)))
@@ -831,9 +928,7 @@ class BiarchetypalAnalysisEvaluator:
         elif metric == "mae":
             return float(np.mean(np.abs(X - X_reconstructed)))
         elif metric == "relative":
-            return float(
-                np.linalg.norm(X - X_reconstructed, ord="fro") / np.linalg.norm(X, ord="fro")
-            )
+            return float(np.linalg.norm(X - X_reconstructed, ord="fro") / np.linalg.norm(X, ord="fro"))
         else:
             raise ValueError(f"Unknown metric: {metric}")
 
@@ -924,27 +1019,19 @@ class BiarchetypalAnalysisEvaluator:
             Dictionary of purity metrics
         """
         # Calculate purity for first set
-        archetype_counts_first = np.bincount(
-            self.dominant_archetypes_first, minlength=self.n_archetypes_first
-        )
+        archetype_counts_first = np.bincount(self.dominant_archetypes_first, minlength=self.n_archetypes_first)
         archetype_purity_first = archetype_counts_first / np.sum(archetype_counts_first)
 
         # Calculate purity for second set
-        archetype_counts_second = np.bincount(
-            self.dominant_archetypes_second, minlength=self.n_archetypes_second
-        )
+        archetype_counts_second = np.bincount(self.dominant_archetypes_second, minlength=self.n_archetypes_second)
         archetype_purity_second = archetype_counts_second / np.sum(archetype_counts_second)
 
         # Calculate overall metrics
         return {
             "archetype_purity_first": archetype_purity_first,
             "archetype_purity_second": archetype_purity_second,
-            "overall_purity_first": np.max(archetype_purity_first)
-            if archetype_purity_first.size > 0
-            else 0,
-            "overall_purity_second": np.max(archetype_purity_second)
-            if archetype_purity_second.size > 0
-            else 0,
+            "overall_purity_first": np.max(archetype_purity_first) if archetype_purity_first.size > 0 else 0,
+            "overall_purity_second": np.max(archetype_purity_second) if archetype_purity_second.size > 0 else 0,
             "purity_std_first": np.std(archetype_purity_first),
             "purity_std_second": np.std(archetype_purity_second),
         }
@@ -1057,22 +1144,12 @@ class BiarchetypalAnalysisEvaluator:
         print(f"   - Explained Variance: {results['reconstruction']['explained_variance']:.4f}")
 
         print("\n2. ARCHETYPE SEPARATION:")
-        print(
-            f"   - Minimum Distance (First Set): {results['separation']['min_distance_first']:.4f}"
-        )
-        print(
-            f"   - Maximum Distance (First Set): {results['separation']['max_distance_first']:.4f}"
-        )
+        print(f"   - Minimum Distance (First Set): {results['separation']['min_distance_first']:.4f}")
+        print(f"   - Maximum Distance (First Set): {results['separation']['max_distance_first']:.4f}")
         print(f"   - Mean Distance (First Set): {results['separation']['mean_distance_first']:.4f}")
-        print(
-            f"   - Minimum Distance (Second Set): {results['separation']['min_distance_second']:.4f}"
-        )
-        print(
-            f"   - Maximum Distance (Second Set): {results['separation']['max_distance_second']:.4f}"
-        )
-        print(
-            f"   - Mean Distance (Second Set): {results['separation']['mean_distance_second']:.4f}"
-        )
+        print(f"   - Minimum Distance (Second Set): {results['separation']['min_distance_second']:.4f}")
+        print(f"   - Maximum Distance (Second Set): {results['separation']['max_distance_second']:.4f}")
+        print(f"   - Mean Distance (Second Set): {results['separation']['mean_distance_second']:.4f}")
 
         print("\n3. DOMINANT ARCHETYPE PURITY:")
         print(f"   - Overall Purity (First Set): {results['purity']['overall_purity_first']:.4f}")
@@ -1092,9 +1169,7 @@ class BiarchetypalAnalysisEvaluator:
             print("   - Clustering metrics not available (insufficient data)")
 
         print("\n5. WEIGHT DIVERSITY:")
-        print(
-            f"   - Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}"
-        )
+        print(f"   - Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}")
         print(
             f"   - Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}"
         )
@@ -1133,9 +1208,5 @@ class BiarchetypalAnalysisEvaluator:
         print(f"Overall Purity (Second Set): {results['purity']['overall_purity_second']:.4f}")
 
         print("\n--- Weight Diversity Metrics ---")
-        print(
-            f"Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}"
-        )
-        print(
-            f"Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}"
-        )
+        print(f"Mean Normalized Entropy (First Set): {results['diversity']['mean_normalized_entropy_first']:.4f}")
+        print(f"Mean Normalized Entropy (Second Set): {results['diversity']['mean_normalized_entropy_second']:.4f}")

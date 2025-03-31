@@ -1,13 +1,23 @@
-"""
-Utility modules for Archetypal Analysis.
+"""Tools for extracting insights from Archetypal Analysis results.
 
-This package provides tools for evaluating, interpreting, and visualizing
-results from archetypal analysis models.
+This package provides specialized utilities that transform archetypal models from
+mathematical abstractions into actionable insights. These tools address the critical
+gap between model fitting and practical application by enabling:
+
+1. Rigorous evaluation of model quality and reliability
+2. Interpretable translation of abstract archetypes into domain-specific meaning
+3. Compelling visualization that communicates patterns to technical and non-technical audiences
+4. Systematic tracking of archetype evolution during model training
+
+These capabilities are essential for deriving value from archetypal analysis,
+particularly in exploratory data analysis, scientific research, and
+data-driven decision making contexts.
 
 Components:
-    evaluation: Tools for assessing model performance and quality
-    interpret: Utilities for interpreting archetypes and their meaning
-    visualization: Functions for plotting and visual analysis of results
+    evaluation: Quantitative assessment of model quality and fit characteristics
+    interpret: Semantic analysis of archetypes and their real-world significance
+    visualization: Advanced plotting and visual analysis techniques
+    tracker: Progressive monitoring of archetype development during training
 
 Basic Usage:
     from archetypax.tools import ArchetypalAnalysisVisualizer

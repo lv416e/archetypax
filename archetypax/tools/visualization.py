@@ -1,4 +1,17 @@
-"""Visualization utilities for Archetypal Analysis."""
+"""Advanced visualization tools for extracting insights from archetypal models.
+
+This module provides specialized visualization capabilities that transform abstract
+archetypal representations into intuitive visual insights. These visualizations
+bridge the gap between mathematical models and human understanding by:
+
+1. Revealing geometric relationships between data points and archetypes
+2. Exposing patterns in feature utilization across different archetypes
+3. Demonstrating reconstruction quality and model performance
+4. Enabling exploration of relationships in both standard and biarchetypal space
+
+These capabilities are essential for model interpretation, result communication,
+and extracting actionable insights from archetypal analysis.
+"""
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -9,15 +22,39 @@ from ..models.biarchetypes import BiarchetypalAnalysis
 
 
 class ArchetypalAnalysisVisualizer:
-    """Visualization utilities for Archetypal Analysis."""
+    """Comprehensive visualization suite for archetypal analysis insights.
+
+    This class provides specialized visualization methods that transform abstract
+    archetypal models into intuitive visual representations. Rather than just plotting
+    data, these methods reveal the underlying structures and relationships discovered
+    by archetypal analysis, enabling:
+
+    - Interpretation of archetype meaning and significance
+    - Assessment of model quality and reconstruction fidelity
+    - Communication of results to technical and non-technical audiences
+    - Discovery of patterns in high-dimensional archetypal space
+
+    These visualizations bridge the critical gap between mathematical models and
+    human understanding, making archetypal analysis results accessible and actionable.
+    """
 
     @staticmethod
     def plot_loss(model: ArchetypalAnalysis) -> None:
-        """
-        Plot the loss history from training.
+        """Visualize convergence behavior through loss trajectory analysis.
+
+        This diagnostic visualization reveals the optimization dynamics of the model
+        by tracking loss values across iterations. It provides critical insights into:
+
+        - Convergence speed and stability
+        - Potential issues with learning rates or initialization
+        - Evidence of premature convergence or local minima traps
+        - Effectiveness of early stopping criteria
+
+        Understanding these dynamics is essential for hyperparameter tuning,
+        model validation, and diagnosing unexpected results.
 
         Args:
-            model: Fitted ArchetypalAnalysis model
+            model: Fitted ArchetypalAnalysis model with loss history
         """
         loss_history = model.get_loss_history()
         if not loss_history:
@@ -33,16 +70,26 @@ class ArchetypalAnalysisVisualizer:
         plt.show()
 
     @staticmethod
-    def plot_archetypes_2d(
-        model: ArchetypalAnalysis, X: np.ndarray, feature_names: list[str] | None = None
-    ) -> None:
-        """
-        Plot data and archetypes in 2D.
+    def plot_archetypes_2d(model: ArchetypalAnalysis, X: np.ndarray, feature_names: list[str] | None = None) -> None:
+        """Reveal geometric relationships between data and archetypes in 2D space.
+
+        This visualization exposes the fundamental geometrical interpretation of
+        archetypal analysis by showing how archetypes position themselves at the
+        extremes of the data distribution and form a convex hull. The plot reveals:
+
+        - Position of archetypes relative to the data cloud
+        - Dominance relationships between data points and archetypes
+        - The convex hull structure formed by the archetypes
+        - Feature-specific patterns that define each archetype
+
+        This representation is particularly valuable for initial model validation,
+        intuitive explanation of what archetypes represent, and identification of
+        outliers or unexpected patterns.
 
         Args:
-            model: Fitted ArchetypalAnalysis model
-            X: Original data
-            feature_names: Optional feature names for axis labels
+            model: Fitted ArchetypalAnalysis model with discovered archetypes
+            X: Original data matrix in 2D space
+            feature_names: Optional feature names for meaningful axis labels
         """
         from scipy.spatial import ConvexHull
 
@@ -109,12 +156,24 @@ class ArchetypalAnalysisVisualizer:
 
     @staticmethod
     def plot_reconstruction_comparison(model: ArchetypalAnalysis, X: np.ndarray) -> None:
-        """
-        Plot original vs reconstructed data.
+        """Assess model fidelity through side-by-side reconstruction comparison.
+
+        This visualization provides a direct assessment of how well the archetypal
+        model captures the underlying data structure by comparing original and
+        reconstructed data points. This comparison reveals:
+
+        - Overall reconstruction quality and information preservation
+        - Specific regions where the model performs well or poorly
+        - Distortion patterns introduced by dimensionality reduction
+        - Evidence of potential overfitting or underfitting
+
+        This assessment is critical for validating model quality, determining
+        an appropriate number of archetypes, and communicating the tradeoff
+        between interpretability and accuracy.
 
         Args:
-            model: Fitted ArchetypalAnalysis model
-            X: Original data matrix
+            model: Fitted ArchetypalAnalysis model for reconstruction
+            X: Original data matrix to be reconstructed
         """
         if model.archetypes is None:
             raise ValueError("Model must be fitted before plotting")
@@ -160,11 +219,23 @@ class ArchetypalAnalysisVisualizer:
 
     @staticmethod
     def plot_membership_weights(model: ArchetypalAnalysis, n_samples: int | None = None) -> None:
-        """
-        Plot membership weights for samples.
+        """Visualize how samples relate to archetypes through weight distribution patterns.
+
+        This heatmap visualization reveals the fundamental composition patterns
+        in the data by showing how each sample leverages different archetypes.
+        The visualization exposes:
+
+        - Dominant archetypes for each sample
+        - Patterns of archetype co-utilization
+        - Samples with similar composition profiles
+        - Evidence of archetype redundancy or specialization
+
+        These insights are valuable for clustering analysis, identifying
+        representative samples, detecting subpopulations, and understanding
+        how archetypes interact to represent the data.
 
         Args:
-            model: Fitted ArchetypalAnalysis model
+            model: Fitted ArchetypalAnalysis model with weights
             n_samples: Optional number of samples to visualize (default: all)
         """
         if model.archetypes is None or model.weights is None:
@@ -212,9 +283,7 @@ class ArchetypalAnalysisVisualizer:
         plt.show()
 
     @staticmethod
-    def plot_archetype_profiles(
-        model: ArchetypalAnalysis, feature_names: list[str] | None = None
-    ) -> None:
+    def plot_archetype_profiles(model: ArchetypalAnalysis, feature_names: list[str] | None = None) -> None:
         """
         Plot feature profiles of each archetype.
 
@@ -275,10 +344,7 @@ class ArchetypalAnalysisVisualizer:
         # Create a bar plot
         bars = plt.bar(
             range(model.n_archetypes),
-            [
-                counts[list(unique).index(i)] if i in unique else 0
-                for i in range(model.n_archetypes)
-            ],
+            [counts[list(unique).index(i)] if i in unique else 0 for i in range(model.n_archetypes)],
             color="skyblue",
             alpha=0.7,
         )
@@ -333,13 +399,11 @@ class ArchetypalAnalysisVisualizer:
         # For a 3-simplex, we can use an equilateral triangle
         # Where each vertex represents an archetype
         sqrt3_2 = np.sqrt(3) / 2
-        triangle_vertices = np.array(
-            [
-                [0, 0],  # Archetype 0 at origin
-                [1, 0],  # Archetype 1 at (1,0)
-                [0.5, sqrt3_2],  # Archetype 2 at (0.5, sqrt(3)/2)
-            ]
-        )
+        triangle_vertices = np.array([
+            [0, 0],  # Archetype 0 at origin
+            [1, 0],  # Archetype 1 at (1,0)
+            [0.5, sqrt3_2],  # Archetype 2 at (0.5, sqrt(3)/2)
+        ])
 
         # Transform weights to 2D coordinates
         points_2d = np.dot(weights_subset, triangle_vertices)
@@ -554,9 +618,7 @@ class BiarchetypalAnalysisVisualizer:
 
         # Create combined reconstruction using mixture weight
         if hasattr(model, "mixture_weight"):
-            X_recon_combined = (
-                model.mixture_weight * X_recon_first + (1 - model.mixture_weight) * X_recon_second
-            )
+            X_recon_combined = model.mixture_weight * X_recon_first + (1 - model.mixture_weight) * X_recon_second
         else:
             # Use equal weights if mixture_weight doesn't exist
             X_recon_combined = 0.5 * X_recon_first + 0.5 * X_recon_second
@@ -601,9 +663,7 @@ class BiarchetypalAnalysisVisualizer:
         axes[1, 0].grid(True, alpha=0.3)
 
         # Combined reconstruction
-        axes[1, 1].scatter(
-            X_recon_combined[:, 0], X_recon_combined[:, 1], alpha=0.7, color="purple"
-        )
+        axes[1, 1].scatter(X_recon_combined[:, 0], X_recon_combined[:, 1], alpha=0.7, color="purple")
         axes[1, 1].scatter(
             archetypes_first[:, 0],
             archetypes_first[:, 1],
@@ -624,9 +684,7 @@ class BiarchetypalAnalysisVisualizer:
         # Check if mixture_weight exists
         mixture_weight = model.mixture_weight if hasattr(model, "mixture_weight") else 0.5
 
-        axes[1, 1].set_title(
-            f"Combined Reconstruction (w={mixture_weight:.2f})\nError: {error_combined:.4f}"
-        )
+        axes[1, 1].set_title(f"Combined Reconstruction (w={mixture_weight:.2f})\nError: {error_combined:.4f}")
         axes[1, 1].grid(True, alpha=0.3)
 
         # Add legend to the last plot
@@ -702,9 +760,7 @@ class BiarchetypalAnalysisVisualizer:
         plt.show()
 
     @staticmethod
-    def plot_mixture_effect(
-        model: BiarchetypalAnalysis, X: np.ndarray, mixture_steps: int = 5
-    ) -> None:
+    def plot_mixture_effect(model: BiarchetypalAnalysis, X: np.ndarray, mixture_steps: int = 5) -> None:
         """
         Plot the effect of different mixture weights between the two archetype sets.
 
@@ -733,9 +789,7 @@ class BiarchetypalAnalysisVisualizer:
                 # Create dummy data with matching shape if shapes don't match
                 X_recon_second = np.zeros_like(X_recon_first)
                 # Display warning
-                print(
-                    "Warning: Shape mismatch in weights_second. Using dummy data for second reconstruction."
-                )
+                print("Warning: Shape mismatch in weights_second. Using dummy data for second reconstruction.")
         else:
             # For standard shape
             X_recon_second = np.matmul(weights_second, archetypes_second)
@@ -781,12 +835,8 @@ class BiarchetypalAnalysisVisualizer:
 
             # Plot
             ax = axes[i] if mixture_steps > 1 else axes
-            ax.scatter(
-                X_original[:, 0], X_original[:, 1], alpha=0.2, color="gray", label="Original"
-            )
-            ax.scatter(
-                X_mixed[:, 0], X_mixed[:, 1], alpha=0.7, color="purple", label="Reconstructed"
-            )
+            ax.scatter(X_original[:, 0], X_original[:, 1], alpha=0.2, color="gray", label="Original")
+            ax.scatter(X_mixed[:, 0], X_mixed[:, 1], alpha=0.7, color="purple", label="Reconstructed")
             ax.scatter(
                 archetypes_first[:, 0],
                 archetypes_first[:, 1],
@@ -825,9 +875,7 @@ class BiarchetypalAnalysisVisualizer:
         """
         # Relaxed condition: at least one of the archetype sets must have exactly 3 archetypes
         if model.n_row_archetypes != 3 and model.n_col_archetypes != 3:
-            raise ValueError(
-                "This simplex plot requires at least one set to have exactly 3 archetypes"
-            )
+            raise ValueError("This simplex plot requires at least one set to have exactly 3 archetypes")
 
         # Get weights for both sets
         weights_first, weights_second = model.get_all_weights()
@@ -845,9 +893,7 @@ class BiarchetypalAnalysisVisualizer:
                     weights_second_subset = weights_second_transposed[indices]
                 else:
                     # Create dummy data if shapes don't match
-                    weights_second_subset = (
-                        np.ones((len(indices), model.n_col_archetypes)) / model.n_col_archetypes
-                    )
+                    weights_second_subset = np.ones((len(indices), model.n_col_archetypes)) / model.n_col_archetypes
             else:
                 # For standard shape
                 weights_second_subset = weights_second[indices]
@@ -863,8 +909,7 @@ class BiarchetypalAnalysisVisualizer:
                 else:
                     # Create dummy data if shapes don't match
                     weights_second_subset = (
-                        np.ones((weights_first.shape[0], model.n_col_archetypes))
-                        / model.n_col_archetypes
+                        np.ones((weights_first.shape[0], model.n_col_archetypes)) / model.n_col_archetypes
                     )
             else:
                 # For standard shape
@@ -885,13 +930,11 @@ class BiarchetypalAnalysisVisualizer:
 
         # Convert barycentric coordinates to 2D for visualization
         sqrt3_2 = np.sqrt(3) / 2
-        triangle_vertices = np.array(
-            [
-                [0, 0],  # Archetype 0 at origin
-                [1, 0],  # Archetype 1 at (1,0)
-                [0.5, sqrt3_2],  # Archetype 2 at (0.5, sqrt(3)/2)
-            ]
-        )
+        triangle_vertices = np.array([
+            [0, 0],  # Archetype 0 at origin
+            [1, 0],  # Archetype 1 at (1,0)
+            [0.5, sqrt3_2],  # Archetype 2 at (0.5, sqrt(3)/2)
+        ])
 
         # Transform weights to 2D coordinates for both sets
         points_2d_first = np.dot(weights_first_subset, triangle_vertices)
@@ -913,9 +956,7 @@ class BiarchetypalAnalysisVisualizer:
         ax1.text(-0.05, -0.05, "A1_0", ha="right", color="blue")
         ax1.text(1.05, -0.05, "A1_1", ha="left", color="blue")
         ax1.text(0.5, sqrt3_2 + 0.05, "A1_2", ha="center", color="blue")
-        ax1.set_title(
-            "First Archetype Set Simplex" + (" (Dummy)" if model.n_row_archetypes != 3 else "")
-        )
+        ax1.set_title("First Archetype Set Simplex" + (" (Dummy)" if model.n_row_archetypes != 3 else ""))
         ax1.axis("equal")
         ax1.axis("off")
 
@@ -931,9 +972,7 @@ class BiarchetypalAnalysisVisualizer:
         ax2.text(-0.05, -0.05, "A2_0", ha="right", color="red")
         ax2.text(1.05, -0.05, "A2_1", ha="left", color="red")
         ax2.text(0.5, sqrt3_2 + 0.05, "A2_2", ha="center", color="red")
-        ax2.set_title(
-            "Second Archetype Set Simplex" + (" (Dummy)" if model.n_col_archetypes != 3 else "")
-        )
+        ax2.set_title("Second Archetype Set Simplex" + (" (Dummy)" if model.n_col_archetypes != 3 else ""))
         ax2.axis("equal")
         ax2.axis("off")
 

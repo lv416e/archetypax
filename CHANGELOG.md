@@ -8,9 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 ### Changed
 - Relocated `ArchetypeTracker` class from `models/archetypes.py` to `tools/tracker.py` for improved code organization while maintaining backward compatibility
+- Enhanced documentation across core modules with "why-focused" docstrings that explain rationale and importance
+- Improved module docstrings in `models/__init__.py` with detailed explanations of when to use each model variant
+- Refined class and method docstrings in `ImprovedArchetypalAnalysis` with parameter impact explanations and usage guidance
+- Enriched docstrings for key public methods (`transform`, `fit`, `fit_transform`, `project_archetypes`, `loss_function`) with clear explanations of their purpose and significance
+- Upgraded documentation in `tools/` modules to better explain analysis and visualization capabilities
+
 ### Fixed
+
 
 ## [0.1.0] - 2025/03/21
 
@@ -36,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Boundary condition anomalies during complex projection calculations
 - Numerical precision challenges in gradient calculations for closely positioned archetypes
 - Thread safety concerns in parallel computation environments
+
 
 ## [0.1.0.dev2] - 2025/03/17
 
@@ -107,6 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gradient calculation errors in specific corner cases
 - Type conversion issues between NumPy and JAX arrays
 - Thread safety issues in parallel computation
+
 
 ## [0.1.0.dev1] - 2025-03-11
 

@@ -1,4 +1,11 @@
-"""Sparse Archetypal Analysis model utilizing JAX."""
+"""Sparse Archetypal Analysis: Interpretable pattern discovery with sparsity constraints.
+
+This module extends archetypal analysis with sparsity-promoting regularization,
+enabling more interpretable and focused archetype discovery. By encouraging
+archetypes to utilize only essential features, this approach addresses a key
+limitation of standard archetypal analysis: the tendency to produce dense,
+difficult-to-interpret archetypes in high-dimensional spaces.
+"""
 
 from functools import partial
 
@@ -12,11 +19,23 @@ from archetypax.models.archetypes import ImprovedArchetypalAnalysis
 
 
 class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
-    """Archetypal Analysis incorporating sparsity constraints on archetypes.
+    """Archetypal Analysis with sparsity constraints for enhanced interpretability.
 
-    This implementation enhances the ImprovedArchetypalAnalysis by introducing
-    sparsity constraints to the archetypes, thereby improving interpretability,
-    particularly in high-dimensional datasets.
+    This implementation addresses a fundamental challenge in standard archetypal analysis:
+    dense archetypes that utilize many features are often difficult to interpret,
+    particularly in high-dimensional datasets where most features may be irrelevant
+    to specific patterns.
+
+    By incorporating sparsity constraints, this approach offers several key advantages:
+
+    1. More interpretable archetypes that focus on truly relevant features
+    2. Automatic feature selection within the archetypal framework
+    3. Improved robustness to noise and irrelevant dimensions
+    4. Better generalization by preventing overfitting to spurious correlations
+    5. Computationally efficient representations, especially for high-dimensional data
+
+    Multiple sparsity-promoting methods are supported, enabling adaptation to different
+    data characteristics and interpretability requirements.
     """
 
     def __init__(
@@ -39,21 +58,40 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         """Initialize the Sparse Archetypal Analysis model.
 
         Args:
-            n_archetypes: Number of archetypes to extract.
-            max_iter: Maximum number of iterations for optimization.
-            tol: Convergence tolerance.
-            random_seed: Random seed for reproducibility.
-            learning_rate: Learning rate for the optimizer.
-            lambda_reg: Regularization strength for weights.
-            lambda_sparsity: Regularization strength for archetype sparsity.
-            sparsity_method: Method for enforcing sparsity ("l1", "l0_approx", or "feature_selection").
-            normalize: Whether to normalize data prior to fitting.
-            projection_method: Method for projecting archetypes ("cbap", "convex_hull", or "knn").
-            projection_alpha: Strength of projection (0-1).
-            archetype_init_method: Method for initializing archetypes
-                ("directional", "qhull", "kmeans_pp").
-            min_volume_factor: Minimum volume factor to prevent degeneracy (0-1).
-            **kwargs: Additional keyword arguments.
+            n_archetypes: Number of archetypes to discover - controls the model's
+                         expressiveness and granularity of pattern discovery
+            max_iter: Maximum optimization iterations - higher values enable better
+                     convergence at computational cost
+            tol: Convergence tolerance for early stopping - smaller values yield
+                 more precise solutions but require more iterations
+            random_seed: Random seed for reproducibility across runs
+            learning_rate: Gradient descent step size - critical balance between
+                          convergence speed and stability
+            lambda_reg: Weight regularization strength - controls weight sparsity
+                       for better interpretability
+            lambda_sparsity: Archetype sparsity strength - higher values produce
+                            more focused archetypes using fewer features
+            sparsity_method: Technique for promoting archetype sparsity:
+                - "l1": L1 regularization (fastest, robust, tends to zero out features)
+                - "l0_approx": Approximated L0 regularization (more aggressive sparsity)
+                - "feature_selection": Entropy-based selection (focuses on key features)
+            normalize: Whether to normalize features - essential for data with
+                      different scales
+            projection_method: Method for projecting archetypes to convex hull:
+                - "cbap": Convex boundary approximation (default, most stable)
+                - "convex_hull": Exact convex hull vertices (more accurate)
+                - "knn": K-nearest neighbors approximation (faster for large datasets)
+            projection_alpha: Strength of boundary projection - higher values push
+                             archetypes more aggressively toward extremes
+            archetype_init_method: Initialization strategy for archetypes:
+                - "directional": Directions from data centroid (robust default)
+                - "qhull"/"convex_hull": Convex hull vertices (geometry-aware)
+                - "kmeans"/"kmeans++": K-means++ initialization (density-aware)
+            min_volume_factor: Minimum volume requirement for archetype simplex -
+                              prevents degenerate solutions with collapsed archetypes
+            **kwargs: Additional parameters including:
+                - early_stopping_patience: Iterations with no improvement before stopping
+                - verbose_level/logger_level: Controls logging detail
         """
         super().__init__(
             n_archetypes=n_archetypes,
@@ -120,15 +158,30 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def loss_function(self, archetypes: jnp.ndarray, weights: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """JIT-compiled loss function incorporating a sparsity constraint on archetypes.
+        """Calculate the composite loss function incorporating sparsity constraints.
+
+        This enhanced objective function extends the standard archetypal loss with
+        multiple sparsity-promoting regularization terms, balancing several competing
+        objectives:
+
+        1. Reconstruction accuracy: Ensuring archetypes accurately represent the data
+        2. Archetype sparsity: Promoting focused archetypes that use fewer features
+        3. Weight interpretability: Encouraging sparse, distinctive weight patterns
+        4. Boundary alignment: Maintaining archetypes at meaningful data extremes
+        5. Archetype diversity: Preventing redundant or overlapping archetypes
+
+        The balance between these terms is critical - too much emphasis on sparsity
+        may sacrifice reconstruction quality, while too little won't yield the
+        interpretability benefits.
 
         Args:
-            archetypes: Archetype matrix of shape (n_archetypes, n_features)
-            weights: Weight matrix of shape (n_samples, n_archetypes)
-            X: Data matrix of shape (n_samples, n_features)
+            archetypes: Archetype matrix (n_archetypes, n_features)
+            weights: Weight matrix (n_samples, n_archetypes)
+            X: Data matrix (n_samples, n_features)
 
         Returns:
-            Loss value as a scalar
+            Combined loss incorporating reconstruction error and multiple
+            regularization terms
         """
         archetypes_f32 = archetypes.astype(jnp.float32)
         weights_f32 = weights.astype(jnp.float32)
@@ -189,15 +242,27 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         return jnp.asarray(total_loss).astype(jnp.float32)
 
     def _calculate_simplex_volume(self, archetypes: jnp.ndarray) -> float:
-        """Calculate the volume of the simplex formed by the archetypes.
+        """Calculate the volume of the simplex formed by archetypes.
 
-        This is utilized to ensure that the archetypes do not collapse into a degenerate subspace.
+        This geometric measure is critical for detecting and preventing degenerate
+        solutions where archetypes collapse to similar positions. Such collapses
+        significantly reduce model expressiveness and interpretability, as multiple
+        archetypes would represent effectively the same pattern.
+
+        The implementation handles two challenging cases:
+        1. High-dimensional spaces where direct volume calculation is unstable
+        2. Situations with fewer archetypes than dimensions, where the true volume
+           would be zero mathematically
+
+        In both cases, a robust proxy based on pairwise distances provides a reliable
+        measure of archetype diversity.
 
         Args:
-            archetypes: Array of shape (n_archetypes, n_features).
+            archetypes: Archetype matrix (n_archetypes, n_features)
 
         Returns:
-            Approximate volume of the simplex.
+            Volume or proxy measure of the archetype simplex - higher values
+            indicate better-distributed archetypes
         """
         n_archetypes, n_features = archetypes.shape
 
@@ -233,15 +298,27 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
 
     @partial(jax.jit, static_argnums=(0,))
     def update_archetypes(self, archetypes: jnp.ndarray, weights: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """Update archetypes with an additional step to promote sparsity.
+        """Update archetypes with sparsity promotion and degeneracy prevention.
+
+        This enhanced update method extends the standard approach with critical
+        improvements for sparse archetypal analysis:
+
+        1. Sparsity promotion through the selected method (l1, l0, feature selection)
+        2. Variance-aware noise injection to prevent dimensional collapse
+        3. Constraint enforcement to maintain valid convex combinations
+        4. Boundary projection to ensure archetypes remain at meaningful extremes
+
+        These extensions are essential for learning truly interpretable archetypes
+        while maintaining numerical stability and preventing convergence to
+        degenerate solutions.
 
         Args:
-            archetypes: Archetype matrix of shape (n_archetypes, n_features)
-            weights: Weight matrix of shape (n_samples, n_archetypes)
-            X: Data matrix of shape (n_samples, n_features)
+            archetypes: Current archetype matrix (n_archetypes, n_features)
+            weights: Weight matrix (n_samples, n_archetypes)
+            X: Data matrix (n_samples, n_features)
 
         Returns:
-            Updated archetype matrix of shape (n_archetypes, n_features)
+            Updated archetypes incorporating sparsity and diversity constraints
         """
         # First, perform the standard archetype update.
         archetypes_updated = super().update_archetypes(archetypes, weights, X)
@@ -320,13 +397,26 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         return jnp.asarray(constrained_archetypes)
 
     def _apply_feature_selection(self, archetypes_updated: jnp.ndarray) -> jnp.ndarray:
-        """Apply feature selection sparsity method.
+        """Apply feature selection-based sparsity to archetypes.
+
+        This sparsity method specifically targets interpretability by enhancing
+        feature selectivity in each archetype. Rather than a uniform penalty on
+        all features, it adaptively identifies and emphasizes the most significant
+        features for each archetype while suppressing less important ones.
+
+        This approach is particularly valuable when:
+        1. Certain key features should dominate each archetype's interpretation
+        2. The relative importance of features matters more than strict sparsity
+        3. Some baseline activity across all features is expected or desirable
+
+        The implementation uses soft thresholding with adaptive percentile cutoffs,
+        providing a more nuanced approach than hard thresholding or L1 regularization.
 
         Args:
-            archetypes_updated: Archetype matrix to apply feature selection to
+            archetypes_updated: Current archetype matrix to be sparsified
 
         Returns:
-            Updated archetype matrix with enhanced feature selectivity
+            Archetype matrix with enhanced feature selectivity
         """
         # For feature selection, apply soft thresholding to enhance feature selectivity.
         # This step retains the largest values in each archetype while shrinking smaller values.
@@ -346,17 +436,30 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         return archetypes_updated
 
     def diversify_archetypes(self, archetypes: jnp.ndarray, X: jnp.ndarray) -> jnp.ndarray:
-        """Non-differentiable post-processing step to ensure archetype diversity.
+        """Prevent degenerate solutions by ensuring sufficient archetype diversity.
 
-        This method guarantees that the archetypes form a non-degenerate simplex with sufficient volume.
-        It is invoked outside the JAX-compiled update steps, as it employs non-differentiable operations.
+        This critical post-processing step addresses a fundamental challenge in
+        archetypal analysis: optimization can sometimes converge to solutions where
+        multiple archetypes collapse to similar positions, particularly when
+        sparsity is enforced.
+
+        Such degenerate solutions drastically reduce model expressiveness and
+        interpretability. This method actively counteracts this tendency by:
+
+        1. Detecting potential degeneracy through simplex volume measurement
+        2. Systematically pushing archetypes away from each other when needed
+        3. Ensuring archetypes remain valid (within the convex hull)
+        4. Verifying improvement through before/after volume comparison
+
+        This operation is performed outside the JAX-compiled update steps since it
+        involves non-differentiable operations and contingent logic.
 
         Args:
-            archetypes: Current archetypes array of shape (n_archetypes, n_features).
-            X: Data matrix of shape (n_samples, n_features).
+            archetypes: Current archetypes matrix to diversify
+            X: Data matrix defining the convex hull boundary
 
         Returns:
-            Diversified archetypes array of shape (n_archetypes, n_features).
+            Diversified archetypes with improved distribution and volume
         """
         n_archetypes = archetypes.shape[0]
 
@@ -412,11 +515,24 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         return archetypes
 
     def get_archetype_sparsity(self) -> np.ndarray:
-        """Calculate the sparsity of each archetype.
+        """Calculate the effective sparsity of each archetype.
+
+        This diagnostic method provides a quantitative measure of how successfully
+        the sparsity constraints have been applied to each archetype. Rather than
+        simply counting zeros (which may be unsuitable for soft-thresholded approaches),
+        it uses the Gini coefficient as a more nuanced sparsity metric.
+
+        The Gini coefficient measures the inequality among values, with higher values
+        indicating greater sparsity (few large values, many small values). This provides:
+
+        1. A standardized way to compare archetypes' feature utilization
+        2. A continuous measure that works with both hard and soft sparsity
+        3. A basis for identifying archetypes that may need further refinement
+        4. A metric for evaluating different sparsity methods
 
         Returns:
-            Array containing the sparsity score for each archetype.
-            Higher values indicate more sparse archetypes.
+            Array containing sparsity scores for each archetype (higher values
+            indicate more focused archetypes using fewer features)
         """
         if not hasattr(self, "archetypes") or self.archetypes is None:
             raise ValueError("The model has not yet been fitted.")
@@ -441,15 +557,28 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         normalize: bool = False,
         **kwargs,
     ) -> "SparseArchetypalAnalysis":
-        """Fit the Sparse Archetypal Analysis model to the data.
+        """Fit the model to discover sparse, interpretable archetypes.
+
+        This method orchestrates the complete sparse archetypal analysis process,
+        building on the standard archetypal optimization while incorporating
+        critical extensions for sparsity and stability:
+
+        1. Leverages the parent class for core optimization
+        2. Applies the selected sparsity-promoting method during optimization
+        3. Performs post-processing to ensure archetype diversity
+        4. Validates sparsity and geometric properties of the solution
+
+        The result is a set of archetypes that balance reconstruction fidelity,
+        interpretability, and geometric meaningfulness.
 
         Args:
-            X: Input data matrix of shape (n_samples, n_features).
-            normalize: Whether to normalize data prior to fitting.
-            **kwargs: Additional keyword arguments.
+            X: Data matrix (n_samples, n_features)
+            normalize: Whether to normalize features before fitting - essential
+                      for data with different scales
+            **kwargs: Additional parameters for customizing the fitting process
 
         Returns:
-            Fitted model instance.
+            Self - fitted model instance with discovered sparse archetypes
         """
         self.logger.info(
             get_message(
@@ -483,16 +612,27 @@ class SparseArchetypalAnalysis(ImprovedArchetypalAnalysis):
         normalize: bool = False,
         **kwargs,
     ) -> np.ndarray:
-        """Fit the Sparse Archetypal Analysis model to the data and return the transformed data.
+        """Fit the model and immediately transform the input data.
+
+        This convenience method combines model fitting and data transformation
+        in a single operation, which offers two key advantages:
+
+        1. Computational efficiency by avoiding redundant calculations
+        2. Simplified workflow for immediate archetype-based representation
+
+        This method is particularly useful in analysis pipelines or when
+        integrating with scikit-learn compatible frameworks that expect
+        this pattern.
 
         Args:
-            X: Data matrix of shape (n_samples, n_features)
-            y: Ignored. Present for API consistency by convention.
-            normalize: Whether to normalize data prior to fitting.
-            **kwargs: Additional keyword arguments.
+            X: Data matrix to fit and transform (n_samples, n_features)
+            y: Ignored. Present for scikit-learn API compatibility
+            normalize: Whether to normalize features before fitting
+            **kwargs: Additional parameters passed to fit()
 
         Returns:
-            Transformed data matrix of shape (n_samples, n_archetypes).
+            Weight matrix representing each sample as a combination of
+            the discovered sparse archetypes (n_samples, n_archetypes)
         """
         X_np = X.values if hasattr(X, "values") else X
         model = self.fit(X_np, normalize, **kwargs)
