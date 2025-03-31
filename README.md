@@ -35,7 +35,6 @@ This makes it particularly valuable for applications requiring both dimensionali
 - 🧠 **Smart Initialization**: Implements multiple strategic initialization methods including k-means++ and directional initialization
 - 🛠️ **Numerical Stability**: Employs sophisticated techniques for improved convergence and stability
 - 📊 **scikit-learn Compatible API**: Fully implements the familiar fit/transform interface for seamless integration
-- 🔄 **Dual-perspective Analysis**: Offers BiarchetypalAnalysis for simultaneous row and column pattern discovery
 - 📈 **Advanced Tracking**: Provides ArchetypeTracker for monitoring optimization trajectories and convergence dynamics
 - 🎯 **Comprehensive Tooling**: Features extensive evaluation, interpretation, and visualization capabilities
 - 📋 **Thorough Documentation**: Includes detailed rationales explaining why each method and parameter matters
