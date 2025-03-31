@@ -65,7 +65,7 @@ ArchetypAX can be used alongside or compared with these related approaches:
 - **PCA**: Principal Component Analysis finds orthogonal directions of maximum variance
 - **NMF**: Non-negative Matrix Factorization decomposes data into non-negative components
 - **k-means**: Clustering technique that partitions data into k clusters
-- **JAX Ecosystem**: Compatible with JAX-based machine learning frameworks like Flax and Haiku
+- **JAX Ecosystem**: Compatible with JAX-based machine learning frameworks like Flax
 - **scikit-learn**: Follows similar API conventions, allowing easy integration
 
 ## Installation
@@ -333,23 +333,6 @@ This implementation uses JAX's automatic differentiation and optimization tools 
 4. **Sophisticated numerical stability safeguards** throughout the optimization process
 5. **Comprehensive trajectory tracking** for monitoring convergence dynamics
 
-## Citation
-
-If you use this package in your research, please cite:
-
-```
-@software{archetypax2025,
-  author = {mary},
-  title = {archetypax: GPU-accelerated Archetypal Analysis using JAX},
-  year = {2025},
-  url = {https://github.com/lv416e/archetypax}
-}
-```
-
-## License
-
-This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
-
 ## Contributing
 
 Contributions are welcome and highly encouraged! Before submitting a pull request, please review the following resources:
@@ -369,3 +352,20 @@ To contribute to the project:
 
 - 🐞 [Issue Tracker](https://github.com/lv416e/archetypax/issues): Report bugs and request features
 - 💬 [Discussions](https://github.com/lv416e/archetypax/discussions): Questions and general community interactions
+
+## Citation
+
+If you use this package in your research, please cite:
+
+```
+@software{archetypax2025,
+  author = {mary},
+  title = {archetypax: GPU-accelerated Archetypal Analysis using JAX},
+  year = {2025},
+  url = {https://github.com/lv416e/archetypax}
+}
+```
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
