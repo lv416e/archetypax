@@ -25,7 +25,7 @@ Basic Usage:
     coefficients = model.transform(data)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Maintain backward compatibility with existing code
 import sys
