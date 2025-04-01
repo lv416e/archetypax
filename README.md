@@ -350,7 +350,7 @@ To contribute to the project:
 
 ## Community
 
-- 🐞 [Issue Tracker](https://github.com/lv416e/archetypax/issues): Report bugs and request features
+- 🐞 [Issues](https://github.com/lv416e/archetypax/issues): Report bugs and request features
 - 💬 [Discussions](https://github.com/lv416e/archetypax/discussions): Questions and general community interactions
 
 ## Citation
