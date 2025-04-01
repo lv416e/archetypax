@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+
+## [0.1.1] - 2025/04/01
+
+### Added
 - Added `CODE_OF_CONDUCT.md` with comprehensive guidelines for community participation and interaction
 - Added `SECURITY.md` with detailed security policy, vulnerability reporting procedures, and supported versions
 
