@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 ### Fixed
+
+
+## [0.1.2]
+
+### Added
+
+### Changed
+
+### Fixed
 - Resolved critical optimization instability in `ImprovedArchetypalAnalysis` by refactoring the `update_step` function to eliminate JIT compilation conflicts with complex conditional logic
 - Fixed oscillation issues in loss function during training by simplifying the archetype projection mechanism and implementing more conservative blending factors
 - Addressed numerical instability in gradient updates by optimizing the direct update frequency and projection intervals
