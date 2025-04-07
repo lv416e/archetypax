@@ -781,32 +781,19 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             # Alternating optimization: periodically use direct archetype update instead of gradient
             # This helps break out of local minima and improves convergence characteristics
-            direct_update_condition = jnp.mod(iteration, 15) == 0
+            use_direct_update = jnp.mod(iteration, 15) == 0  # Every 15 iterations
 
-            # Dictionary-based dispatch for projection method selection
-            projection_method_fn = {
-                "cbap": self.project_archetypes,
-                "default": self.project_archetypes,
-                "convex_hull": self.project_archetypes_convex_hull,
-                "knn": self.project_archetypes_knn,
-            }
+            def apply_direct_update():
+                """Apply direct algebraic update to archetypes."""
+                archetypes_dir = self.update_archetypes(new_params["archetypes"], new_params["weights"], X_f32)
+                # Blend with gradient-based update to maintain stability
+                blend = 0.2  # 20% direct update, 80% gradient update
+                return blend * archetypes_dir + (1 - blend) * new_params["archetypes"]
 
-            # Use lax.cond for conditional logic
-            def apply_direct_update(_):
-                return self.update_archetypes(new_params["archetypes"], new_params["weights"], X_f32)
-
-            # Use lax.cond for conditional logic
-            def apply_projection(_):
-                if self.projection_method in projection_method_fn:
-                    # Apply selected projection method
-                    return projection_method_fn[self.projection_method](new_params["archetypes"], X_f32)
-                else:
-                    # Default to standard projection
-                    return self.project_archetypes(new_params["archetypes"], X_f32)
-
-            # Use lax.cond for conditional logic
-            projected = jax.lax.cond(direct_update_condition, apply_direct_update, apply_projection, operand=None)
-            new_params["archetypes"] = projected
+            # Apply direct update conditionally
+            new_params["archetypes"] = jax.lax.cond(
+                use_direct_update, lambda: apply_direct_update(), lambda: new_params["archetypes"]
+            )
 
             # Store pre-projection archetypes
             pre_projection_archetypes = new_params["archetypes"]
@@ -814,21 +801,17 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
 
             # Intermittent projection: only project archetypes every N iterations
             # This allows optimization to make progress between projections
-            do_projection_condition = jnp.mod(iteration, 10) == 0
-
-            # Dictionary-based dispatch for projection method selection in project_archetypes
-            projection_method_dict = {
-                "cbap": self.project_archetypes,
-                "default": self.project_archetypes,
-                "convex_hull": self.project_archetypes_convex_hull,
-                "knn": self.project_archetypes_knn,
-            }
+            do_projection = jnp.mod(iteration, 10) == 0
 
             # Conditional projection function
-            def apply_projection_method(_):
-                # Select appropriate projection method using dictionary
-                project_fn = projection_method_dict.get(self.projection_method, self.project_archetypes)
-                projected = project_fn(new_params["archetypes"], X_f32)
+            def project_archetypes():
+                # Select appropriate projection method
+                if self.projection_method == "cbap" or self.projection_method == "default":
+                    projected = self.project_archetypes(new_params["archetypes"], X_f32)
+                elif self.projection_method == "convex_hull":
+                    projected = self.project_archetypes_convex_hull(new_params["archetypes"], X_f32)
+                else:
+                    projected = self.project_archetypes_knn(new_params["archetypes"], X_f32)
 
                 # Calculate post-projection loss
                 post_projection_loss = self.loss_function(projected, new_params["weights"], X_f32)
@@ -852,12 +835,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
                 # Blend original and projected archetypes
                 return blend_factor * projected + (1 - blend_factor) * pre_projection_archetypes
 
-            def keep_original(_):
-                return pre_projection_archetypes
-
-            # Only apply projection on designated iterations using lax.cond
+            # Only apply projection on designated iterations
             new_params["archetypes"] = jax.lax.cond(
-                do_projection_condition, apply_projection_method, keep_original, operand=None
+                do_projection, lambda: project_archetypes(), lambda: pre_projection_archetypes
             )
 
             # Ensure consistent data types
@@ -1057,9 +1037,9 @@ class ImprovedArchetypalAnalysis(ArchetypalAnalysis):
             self.logger.info(f"  Archetype {i + 1}: {change:.6f}")
 
         # Inverse scale transformation
-        archetypes_scaled = np.array(params["archetypes"])
+        archetypes_scaled = np.array(best_params["archetypes"])
         self.archetypes = archetypes_scaled * self.X_std + self.X_mean if self.normalize else archetypes_scaled
-        self.weights = np.array(params["weights"])
+        self.weights = np.array(best_params["weights"])
 
         if len(self.loss_history) > 0:
             self.logger.info(
