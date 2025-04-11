@@ -285,7 +285,6 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
                 params, opt_state, loss = update_step(params, opt_state, X_jax, it)
 
                 loss_value = float(loss)
-                prev_loss = loss_value
                 self.loss_history.append(loss_value)
 
                 if jnp.isnan(loss_value):
@@ -298,6 +297,8 @@ class ArchetypalAnalysis(BaseEstimator, TransformerMixin):
 
                 if it % 50 == 0:
                     self.logger.info(f"Iteration {it}, Loss: {loss_value:.6f}")
+
+                prev_loss = loss_value
 
             except Exception as e:
                 self.logger.error(f"Error at iteration {it}: {e!s}")
