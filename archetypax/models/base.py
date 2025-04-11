@@ -1,8 +1,34 @@
-"""GPU-accelerated Archetypal Analysis implementation using JAX.
+"""Archetypal Analysis using JAX.
 
-This module provides a foundational implementation of Archetypal Analysis (AA)
-optimized for GPU acceleration via JAX. AA identifies extreme points (archetypes)
-that can represent the entire dataset through convex combinations.
+This module provides the foundational implementation of Archetypal Analysis (AA) optimized for GPU acceleration via JAX.
+It serves as the base class for more advanced implementations in the archetypax package.
+
+Archetypal Analysis identifies extreme patterns (archetypes) in data that can represent the entire dataset
+through convex combinations, offering both dimensionality reduction and interpretable insights into data structure.
+
+Core Features:
+- JAX-based implementation for GPU/TPU acceleration
+- Scikit-learn compatible API (BaseEstimator, TransformerMixin)
+- Standard k-means++ style initialization
+- Gradient-based optimization with Adam
+- Basic weight and archetype projection methods
+
+This base implementation provides a solid foundation with standard AA features,
+while more advanced techniques are available in derived classes such as ImprovedArchetypalAnalysis.
+
+Example usage:
+    ```python
+    from archetypax.models import ArchetypalAnalysis
+
+    # Initialize model
+    model = ArchetypalAnalysis(
+        n_archetypes=5,
+        normalize=True
+    )
+
+    # Fit model and transform data
+    weights = model.fit_transform(X)
+    ```
 """
 
 from functools import partial

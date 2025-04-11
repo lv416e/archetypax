@@ -1,4 +1,41 @@
-"""Improved Archetypal Analysis model using JAX."""
+"""Improved Archetypal Analysis using JAX.
+
+This module extends the base ArchetypalAnalysis class with enhanced optimization strategies
+and boundary projection techniques.
+The ImprovedArchetypalAnalysis class provides a more robust and versatile implementation
+of Archetypal Analysis (AA) using JAX for GPU acceleration.
+
+The improvements focus on:
+- Multiple initialization strategies (directional, convex hull, kmeans++)
+- Advanced optimization with hybrid gradient and direct update methods
+- Adaptive boundary projection techniques
+- Better convergence stability through regularization
+
+Key advantages over the base implementation:
+- More stable convergence across diverse datasets
+- Higher quality solutions with improved boundary placement
+- Richer configuration options for domain-specific tuning
+- Enhanced computational efficiency for large-scale applications
+
+Example usage:
+    ```python
+    from archetypax.models import ImprovedArchetypalAnalysis
+
+    # Initialize model
+    model = ImprovedArchetypalAnalysis(
+        n_archetypes=5,
+        normalize=True,
+        archetype_init_method="directional",
+        projection_method="cbap"
+    )
+
+    # Fit model and transform data
+    weights = model.fit_transform(X)
+
+    # Extract discovered archetypes
+    archetypes = model.archetypes
+    ```
+"""
 
 from functools import partial
 
