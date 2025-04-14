@@ -1,20 +1,11 @@
-"""
-Guide for refactoring existing code to use the new ArchetypAX logging system.
+# Refactoring Guide: Using the ArchetypAX Logging System
 
-This file demonstrates how to convert print statements and other ad-hoc logging
-to use the new structured logging system. It provides before/after examples
-and best practices for proper logging integration.
-"""
+This guide demonstrates how to convert print statements and other ad-hoc logging to use the new structured logging system in ArchetypAX. Below you'll find before/after examples and best practices for proper logging integration.
 
-# ============================================================================
-# EXAMPLE 1: Basic print statement conversion
-# ============================================================================
+## Example 1: Basic Print Statement Conversion
 
-print("=== Example 1: Basic print statement conversion ===")
-
-# BEFORE: Using print statements
-print("\nBEFORE:")
-print("""
+### BEFORE: Using print statements
+```python
 def fit(self, X, normalize=False, **kwargs):
     # Code...
     print(f"Data shape: {X_jax.shape}")
@@ -24,11 +15,10 @@ def fit(self, X, normalize=False, **kwargs):
     for i in range(max_iter):
         # Iteration code...
         print(f"Iteration {i}, Loss: {loss_value:.6f}")
-""")
+```
 
-# AFTER: Using the logging system
-print("\nAFTER:")
-print("""
+### AFTER: Using the logging system
+```python
 from archetypax.logger import get_logger, get_message
 
 # Get a logger for this module
@@ -48,17 +38,12 @@ def fit(self, X, normalize=False, **kwargs):
                               current=i,
                               total=max_iter,
                               loss=loss_value))
-""")
+```
 
-# ============================================================================
-# EXAMPLE 2: Error handling and warnings
-# ============================================================================
+## Example 2: Error Handling and Warnings
 
-print("\n=== Example 2: Error handling and warnings ===")
-
-# BEFORE: Ad-hoc error and warning messages
-print("\nBEFORE:")
-print("""
+### BEFORE: Ad-hoc error and warning messages
+```python
 try:
     # Some computation
     result = complex_computation()
@@ -68,11 +53,10 @@ except Exception as e:
 # Warning message
 if np.isnan(loss_value):
     print(f"Warning: NaN detected at iteration {i}. Stopping early.")
-""")
+```
 
-# AFTER: Structured error and warning logging
-print("\nAFTER:")
-print("""
+### AFTER: Structured error and warning logging
+```python
 try:
     # Some computation
     result = complex_computation()
@@ -84,41 +68,30 @@ except Exception as e:
 if np.isnan(loss_value):
     logger.warning(get_message("warning", "nan_detected",
                               iteration=i))
-""")
+```
 
-# ============================================================================
-# EXAMPLE 3: Tracking performance
-# ============================================================================
+## Example 3: Tracking Performance
 
-print("\n=== Example 3: Tracking performance ===")
-
-# BEFORE: Manual timing
-print("\nBEFORE:")
-print("""
+### BEFORE: Manual timing
+```python
 start_time = time.time()
 # Perform some operation
 complex_operation()
 elapsed_time = time.time() - start_time
 print(f"Operation completed in {elapsed_time:.4f} seconds")
-""")
+```
 
-# AFTER: Using the performance timer
-print("\nAFTER:")
-print("""
+### AFTER: Using the performance timer
+```python
 with logger.perf_timer("complex_operation"):
     # Perform some operation
     complex_operation()
-""")
+```
 
-# ============================================================================
-# EXAMPLE 4: Complete refactoring of a method
-# ============================================================================
+## Example 4: Complete Refactoring of a Method
 
-print("\n=== Example 4: Complete refactoring of a method ===")
-
-# BEFORE: Original method with print statements
-print("\nBEFORE:")
-print("""
+### BEFORE: Original method with print statements
+```python
 def _optimize(self, X, initial_archetypes, initial_weights, max_iter=500):
     print(f"Initial loss: {initial_loss:.6f}")
 
@@ -146,11 +119,10 @@ def _optimize(self, X, initial_archetypes, initial_weights, max_iter=500):
             break
 
     print(f"Final loss: {self.loss_history[-1]:.6f}")
-""")
+```
 
-# AFTER: Refactored method with proper logging
-print("\nAFTER:")
-print("""
+### AFTER: Refactored method with proper logging
+```python
 def _optimize(self, X, initial_archetypes, initial_weights, max_iter=500):
     logger = get_logger(__name__)
 
@@ -195,63 +167,53 @@ def _optimize(self, X, initial_archetypes, initial_weights, max_iter=500):
     logger.info(get_message("result", "final_loss",
                           loss=self.loss_history[-1],
                           iterations=len(self.loss_history)))
-""")
+```
 
-# ============================================================================
-# BEST PRACTICES
-# ============================================================================
+## Best Practices for Logging
 
-print("\n=== Best Practices for Logging ===")
-print("""
-1. Initialize a logger at the module level:
-   - logger = get_logger(__name__)
+1. **Initialize a logger at the module level:**
+   - `logger = get_logger(__name__)`
 
-2. Use appropriate log levels:
-   - DEBUG: Detailed information, typically of interest only when diagnosing problems
-   - INFO: Confirmation that things are working as expected
-   - WARNING: An indication that something unexpected happened, but the program is still working
-   - ERROR: Due to a more serious problem, the program has not been able to perform a function
-   - CRITICAL: A serious error, indicating that the program itself may be unable to continue running
+2. **Use appropriate log levels:**
+   - **DEBUG**: Detailed information, typically of interest only when diagnosing problems
+   - **INFO**: Confirmation that things are working as expected
+   - **WARNING**: An indication that something unexpected happened, but the program is still working
+   - **ERROR**: Due to a more serious problem, the program has not been able to perform a function
+   - **CRITICAL**: A serious error, indicating that the program itself may be unable to continue running
 
-3. Use structured message templates:
-   - Use get_message() with appropriate category and key
+3. **Use structured message templates:**
+   - Use `get_message()` with appropriate category and key
    - Provide all required parameters for message formatting
 
-4. Log exceptions properly:
+4. **Log exceptions properly:**
    - Catch exceptions and log them with appropriate context
    - Include relevant details like iteration number, parameters, etc.
 
-5. Use performance timers for timing operations:
-   - Wrap time-sensitive operations with logger.perf_timer()
+5. **Use performance timers for timing operations:**
+   - Wrap time-sensitive operations with `logger.perf_timer()`
    - Use descriptive names for operations
 
-6. Don't mix print statements and logging:
+6. **Don't mix print statements and logging:**
    - Convert all print statements to appropriate log calls
    - Reserve print statements for direct user interaction only
 
-7. Include contextual information:
+7. **Include contextual information:**
    - Log messages should provide enough context to be understood
    - Include relevant variable values, operation names, etc.
 
-8. Don't overlog:
+8. **Don't overlog:**
    - Be selective about what to log at each level
    - Use DEBUG level for high-volume or detailed information
    - Consider using conditional logging for verbose operations
-""")
 
-# ============================================================================
-# ADDITIONAL RESOURCES
-# ============================================================================
+## Additional Resources
 
-print("\n=== Additional Resources ===")
-print("""
-1. Module Documentation:
-   - archetypax.logger.core: Main logging module
-   - archetypax.logger.messages: Message templates
+1. **Module Documentation:**
+   - `archetypax.logger.core`: Main logging module
+   - `archetypax.logger.messages`: Message templates
 
-2. Example Usage:
-   - archetypax/logger/examples/logger_usage.py: Complete example of logger usage
+2. **Example Usage:**
+   - `archetypax/logger/examples/logger_usage.py`: Complete example of logger usage
 
-3. Python Logging Documentation:
+3. **Python Logging Documentation:**
    - https://docs.python.org/3/library/logging.html
-""")

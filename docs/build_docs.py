@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
-"""
-Script to build documentation automatically.
+"""Script to build documentation automatically.
+
 This script will:
 1. Generate API documentation from docstrings
 2. Build HTML documentation using Sphinx.
@@ -14,9 +13,7 @@ from pathlib import Path
 def run_command(command):
     """Run a shell command and print output."""
     print(f"Running: {command}")
-    process = subprocess.Popen(
-        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-    )
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     for line in iter(process.stdout.readline, b""):
         sys.stdout.write(line.decode("utf-8"))
@@ -28,6 +25,7 @@ def run_command(command):
 
 
 def main():
+    """Build the documentation."""
     # Get the docs directory (where this script is)
     docs_dir = Path(__file__).parent.absolute()
     api_dir = docs_dir / "reference"

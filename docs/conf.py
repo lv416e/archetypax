@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.abspath(".."))
 
 # Project information
 project = "archetypax"
-copyright = f"{datetime.now().year}, mary"
 author = "mary"
+copyright = f"{datetime.now().year}, {author}"
 
 # Import package to get version
 import archetypax
@@ -74,21 +74,13 @@ html_show_sourcelink = True
 html_show_sphinx = True
 html_show_copyright = True
 
-# Create a _static directory if it doesn't exist
-import os
-
 if not os.path.exists("_static"):
     os.makedirs("_static")
 
-# Read the Docs specific settings
-# This part is only executed when building on Read the Docs
-on_rtd = os.environ.get("READTHEDOCS", None) == "True"
+on_rtd = os.environ.get("READTHEDOCS", None) == True
 if on_rtd:
-    # No need for special settings, Read the Docs handles most of this automatically
     pass
 else:
-    # Local build settings
-    pass
     pass
 
 html_context = {

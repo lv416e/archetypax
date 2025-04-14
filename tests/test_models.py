@@ -1,11 +1,10 @@
 """Unit tests for archetypax models."""
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
 from sklearn.datasets import make_blobs
 
-from archetypax.models.archetypes import ArchetypeTracker, ImprovedArchetypalAnalysis
+from archetypax.models.archetypes import ImprovedArchetypalAnalysis
 from archetypax.models.base import ArchetypalAnalysis
 from archetypax.models.biarchetypes import BiarchetypalAnalysis
 from archetypax.models.sparse_archetypes import SparseArchetypalAnalysis
@@ -292,9 +291,7 @@ class TestImprovedArchetypalAnalysis:
         model = ImprovedArchetypalAnalysis(n_archetypes=2, max_iter=2)
 
         # Test fit_transform with kwargs
-        weights = model.fit_transform(
-            small_sample_data, normalize=True, method="adam", max_iter=5, tol=1e-4
-        )
+        weights = model.fit_transform(small_sample_data, normalize=True, method="adam", max_iter=5, tol=1e-4)
 
         assert weights.shape == (10, 2)
         assert np.allclose(np.sum(weights, axis=1), 1.0)
@@ -418,32 +415,6 @@ class TestImprovedArchetypalAnalysis:
         weights_medium = model.transform(medium_data, max_iter=5)
         assert weights_medium.shape == (50, 2)
         assert np.allclose(np.sum(weights_medium, axis=1), 1.0)
-
-    @pytest.mark.skipif(True, reason="Matplotlib visualization test skipped by default")
-    def test_visualize_movement(self, small_sample_data):
-        """Test visualization method for archetype movement."""
-        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
-        tracker.fit(small_sample_data)
-
-        # Try to visualize movement with default parameters
-        fig = tracker.visualize_movement()
-
-        # If matplotlib is available, this should return a figure
-        if fig is not None:
-            assert str(type(fig)).find("matplotlib.figure.Figure") != -1
-
-    @pytest.mark.skipif(True, reason="Matplotlib visualization test skipped by default")
-    def test_visualize_boundary_proximity(self, small_sample_data):
-        """Test visualization method for boundary proximity."""
-        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
-        tracker.fit(small_sample_data)
-
-        # Try to visualize boundary proximity
-        fig = tracker.visualize_boundary_proximity()
-
-        # If matplotlib is available, this should return a figure
-        if fig is not None:
-            assert str(type(fig)).find("matplotlib.figure.Figure") != -1
 
 
 class TestBiarchetypalAnalysis:
@@ -572,9 +543,7 @@ class TestBiarchetypalAnalysis:
         with pytest.raises(ValueError, match="Model must be fitted before getting row archetypes"):
             model.get_row_archetypes()
 
-        with pytest.raises(
-            ValueError, match="Model must be fitted before getting column archetypes"
-        ):
+        with pytest.raises(ValueError, match="Model must be fitted before getting column archetypes"):
             model.get_col_archetypes()
 
         with pytest.raises(ValueError, match="Model must be fitted before getting row weights"):
@@ -651,131 +620,6 @@ class TestBiarchetypalAnalysis:
         assert np.allclose(np.sum(gamma_new, axis=0), 1.0)
 
 
-class TestArchetypeTracker:
-    """Test suite for the ArchetypeTracker class."""
-
-    def test_initialization(self):
-        """Verify proper initialization of tracker parameters."""
-        tracker = ArchetypeTracker(n_archetypes=3)
-
-        # Check base class parameters are properly initialized
-        assert tracker.n_archetypes == 3
-        assert tracker.max_iter == 500
-        assert tracker.tol == 1e-6
-        assert tracker.archetypes is None
-        assert tracker.weights is None
-
-        # Check tracker-specific attributes
-        assert tracker.archetype_history == []
-        assert tracker.boundary_proximity_history == []
-        assert tracker.is_outside_history == []
-        assert tracker.archetype_grad_scale == 1.0
-        assert tracker.noise_scale == 0.02
-        assert tracker.exploration_noise_scale == 0.05
-
-    def test_fit(self, small_sample_data):
-        """Test that fit method properly records archetype movement history."""
-        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
-        tracker.fit(small_sample_data)
-
-        # Check that base functionality works
-        assert tracker.archetypes is not None
-        assert tracker.weights is not None
-        assert tracker.archetypes.shape == (2, 2)
-        assert tracker.weights.shape == (10, 2)
-
-        # Check tracker-specific outputs
-        assert len(tracker.archetype_history) > 0
-        assert len(tracker.boundary_proximity_history) > 0
-        assert len(tracker.is_outside_history) > 0
-
-        # Check history shape consistency
-        assert tracker.archetype_history[0].shape == (2, 2)
-        assert len(tracker.boundary_proximity_history) == len(tracker.is_outside_history)
-        assert isinstance(tracker.boundary_proximity_history[0], float)
-
-        # Test loss history
-        assert len(tracker.loss_history) > 0
-        assert all(isinstance(loss, float) for loss in tracker.loss_history)
-
-    def test_transform(self, small_sample_data):
-        """Test transform still works properly in the tracker."""
-        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
-        tracker.fit(small_sample_data)
-
-        # Test transform with same data
-        weights = tracker.transform(small_sample_data, max_iter=5)
-        assert weights.shape == (10, 2)
-        assert np.allclose(np.sum(weights, axis=1), 1.0)
-
-        # Test with new data
-        new_data = np.random.rand(5, 2)
-        weights = tracker.transform(new_data, max_iter=5)
-        assert weights.shape == (5, 2)
-        assert np.allclose(np.sum(weights, axis=1), 1.0)
-
-    def test_check_archetypes_outside(self, small_sample_data):
-        """Test method for checking if archetypes are outside convex hull."""
-        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
-        tracker.fit(small_sample_data)
-
-        # Get test data in JAX format
-        X_jax = jnp.array(small_sample_data)
-        archetypes_jax = jnp.array(tracker.archetypes)
-
-        # Check if archetypes are outside convex hull
-        is_outside = tracker._check_archetypes_outside(archetypes_jax, X_jax)
-
-        # Verify result shape and type
-        assert is_outside.shape == (2,)
-        assert is_outside.dtype == bool
-
-    def test_constrain_to_convex_hull(self, small_sample_data):
-        """Test method for constraining archetypes to convex hull."""
-        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
-        tracker.fit(small_sample_data)
-
-        # Get test data in JAX format
-        X_jax = jnp.array(small_sample_data)
-        archetypes_jax = jnp.array(tracker.archetypes)
-
-        # Constrain archetypes to convex hull
-        constrained = tracker._constrain_to_convex_hull_batch(archetypes_jax, X_jax)
-
-        # Verify result shape
-        assert constrained.shape == (2, 2)
-
-        # Check if any archetypes are outside after constraint
-        is_outside = tracker._check_archetypes_outside(constrained, X_jax)
-        assert not np.any(is_outside)  # None should be outside after constraint
-
-    @pytest.mark.skipif(True, reason="Matplotlib visualization test skipped by default")
-    def test_visualize_movement(self, small_sample_data):
-        """Test visualization method for archetype movement."""
-        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
-        tracker.fit(small_sample_data)
-
-        # Try to visualize movement with default parameters
-        fig = tracker.visualize_movement()
-
-        # If matplotlib is available, this should return a figure
-        if fig is not None:
-            assert str(type(fig)).find("matplotlib.figure.Figure") != -1
-
-    @pytest.mark.skipif(True, reason="Matplotlib visualization test skipped by default")
-    def test_visualize_boundary_proximity(self, small_sample_data):
-        """Test visualization method for boundary proximity."""
-        tracker = ArchetypeTracker(n_archetypes=2, max_iter=2)
-        tracker.fit(small_sample_data)
-
-        # Try to visualize boundary proximity
-        fig = tracker.visualize_boundary_proximity()
-
-        # If matplotlib is available, this should return a figure
-        if fig is not None:
-            assert str(type(fig)).find("matplotlib.figure.Figure") != -1
-
-
 class TestSparseArchetypalAnalysis:
     """Test suite for the SparseArchetypalAnalysis class."""
 
@@ -833,9 +677,7 @@ class TestSparseArchetypalAnalysis:
         sparsity_methods = ["l1", "l0_approx", "feature_selection"]
 
         for method in sparsity_methods:
-            model = SparseArchetypalAnalysis(
-                n_archetypes=2, max_iter=10, lambda_sparsity=0.2, sparsity_method=method
-            )
+            model = SparseArchetypalAnalysis(n_archetypes=2, max_iter=10, lambda_sparsity=0.2, sparsity_method=method)
             model.fit(small_sample_data)
 
             # Basic checks
@@ -857,9 +699,7 @@ class TestSparseArchetypalAnalysis:
         # Check shape and range
         assert sparsity_scores.shape == (2,)
         assert np.all(np.abs(sparsity_scores) >= 0.0), "Sparsity scores should be non-negative"
-        assert np.all(np.abs(sparsity_scores) <= 1.0), (
-            "Sparsity scores should be less than or equal to 1"
-        )
+        assert np.all(np.abs(sparsity_scores) <= 1.0), "Sparsity scores should be less than or equal to 1"
 
     def test_error_before_sparsity_calculation(self):
         """Test error handling when calculating sparsity before fitting."""
@@ -899,9 +739,7 @@ class TestSparseArchetypalAnalysis:
 
         # Models with higher sparsity coefficients tend to have higher average sparsity scores
         # However, due to the influence of initialization, this is not guaranteed to hold true in all cases
-        assert isinstance(np.mean(sparsity_low), float), (
-            "The sparsity score should be a float even with low λ_sparsity"
-        )
+        assert isinstance(np.mean(sparsity_low), float), "The sparsity score should be a float even with low λ_sparsity"
         assert isinstance(np.mean(sparsity_high), float), (
             "The sparsity score should be a float even with high λ_sparsity"
         )

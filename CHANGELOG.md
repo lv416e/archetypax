@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 ### Changed
+- Streamlined inline comments across the codebase to enhance readability and maintain focus on core logic.
+- Updated documentation, including docstrings and guides, to improve clarity, accuracy, and comprehensiveness.
+- Removed the `ArchetypeTracker` class from `archetypax/models/archetypes.py` to simplify the model structure, as its tracking capabilities are now integrated into the enhanced logging system.
 
 ### Fixed
 
