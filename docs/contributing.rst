@@ -1,7 +1,8 @@
 Contributing
 ============
 
-We welcome contributions to ``archetypax``! This document outlines the process for contributing to the project and provides guidelines to ensure a smooth collaboration experience.
+We welcome contributions to ``archetypax``!
+This document outlines the process for contributing to the project and provides guidelines to ensure a smooth collaboration experience.
 
 Development Environment
 ---------------------
@@ -20,23 +21,23 @@ To set up a development environment:
 
    .. code-block:: bash
 
-       python -m venv .venv
-       source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-       pip install -e ".[dev,docs,examples]"
+       uv sync
+       uv pip install -e ".[dev,docs,examples]
 
 4. Set up pre-commit hooks:
 
    .. code-block:: bash
 
-       pre-commit install
+       uvx pre-commit install
 
 Code Style
 ---------
 
-``archetypax`` follows a consistent code style enforced by ruff and black. The configuration is defined in ``pyproject.toml``. Key style guidelines include:
+``archetypax`` follows a consistent code style enforced by ruff and black.
+The configuration is defined in ``pyproject.toml``. Key style guidelines include:
 
 - Use Google-style docstrings
-- Maximum line length of 100 characters
+- Maximum line length of 120 characters
 - Type annotations for function signatures
 - Comprehensive test coverage
 
@@ -45,14 +46,12 @@ To check your code style:
 .. code-block:: bash
 
     ruff check .
-    black --check .
 
 To automatically format your code:
 
 .. code-block:: bash
 
     ruff check --fix .
-    black .
 
 Pull Request Process
 ------------------

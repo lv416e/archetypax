@@ -11,12 +11,14 @@ archetypax/
 │   ├── __init__.py          # Models namespace
 │   ├── base.py              # Base archetypal analysis implementation
 │   ├── archetypes.py        # Improved archetypal analysis implementation
-│   └── biarchetypes.py      # Biarchetypal analysis implementation
+│   ├── biarchetypes.py      # Biarchetypal analysis implementation
+│   └── sparse_archetypes.py # Sparse archetypal analysis implementation
 └── tools/                   # Utility modules
     ├── __init__.py          # Tools namespace
     ├── evaluation.py        # Evaluation metrics and analysis
-    ├── visualization.py     # Visualization utilities
-    └── interpret.py         # Interpretation methods
+    ├── interpret.py         # Interpretation methods
+    ├── tracker.py           # Archetype optimization tracking utilities
+    └── visualization.py     # Visualization utilities
 ```
 
 ## Design Philosophy
@@ -27,11 +29,13 @@ The package follows a modular design with clear separation of concerns:
    - `base.py`: Provides the foundational implementation with essential functionality
    - `archetypes.py`: Extends the base with improved optimization and features
    - `biarchetypes.py`: Implements the dual-archetype approach for more expressive modeling
+   - `sparse_archetypes.py`: Implements the sparse archetypal analysis
 
 2. **Utility Tools (`tools/`)**: Houses supporting functionality for analysis and visualization.
    - `evaluation.py`: Metrics and methods to assess model quality and performance
-   - `visualization.py`: Comprehensive visualization tools for model exploration
    - `interpret.py`: Methods to interpret and explain model results
+   - `tracker`: Archetypes tracking
+   - `visualization.py`: Comprehensive visualization tools for model exploration
 
 ## Import Patterns
 

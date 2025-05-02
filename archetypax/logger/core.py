@@ -1,16 +1,17 @@
 """
 Advanced logging system for the ArchetypAX project.
 
-This module provides a sophisticated logging system that can be used throughout
-the ArchetypAX project. It includes:
+This module provides a sophisticated logging system that can be used throughout the ArchetypAX project.
 
+It includes:
 - Multiple log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - Customizable formatters for different outputs
 - File and console handlers
 - Contextualized logging with module information
 - Performance tracking capabilities
 
-Usage:
+Example usage:
+    ```python
     from archetypax.logger import get_logger
 
     # Get a logger for your module
@@ -27,6 +28,7 @@ Usage:
     with logger.perf_timer("operation_name"):
         # Your code here
         pass
+    ```
 """
 
 import logging
@@ -36,7 +38,6 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 
-# Define log levels with descriptive names
 LOG_LEVELS = {
     "debug": logging.DEBUG,
     "info": logging.INFO,
@@ -44,12 +45,9 @@ LOG_LEVELS = {
     "error": logging.ERROR,
     "critical": logging.CRITICAL,
 }
-
-# Default log format with timestamp, level, module, and message
 DEFAULT_LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# Global dictionary to store logger instances
 _loggers: dict[str, "ArchetypAXLogger"] = {}
 
 
@@ -107,27 +105,21 @@ def configure_logger(
     Returns:
         Configured logger instance
     """
-    # Convert string level to logging level if needed
     if isinstance(level, str):
         level = LOG_LEVELS.get(level.lower(), logging.INFO)
 
-    # Create logger
     logger = ArchetypAXLogger(logger_name)
     logger.setLevel(level)
-    logger.propagate = False  # Don't propagate to parent loggers
+    logger.propagate = False
 
-    # Create formatter
     formatter = logging.Formatter(format_string, date_format)
 
-    # Add console handler if requested
     if console:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-    # Add file handler if log file is specified
     if log_file:
-        # Create log directory if it doesn't exist
         log_dir = os.path.dirname(log_file)
         if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir)
@@ -155,22 +147,18 @@ def get_logger(
     Returns:
         Configured logger instance
     """
-    # Return existing logger if already configured
     if name in _loggers:
         return _loggers[name]
 
-    # Create default log file if not specified
     if log_file is None:
-        # Default log directory in user's home directory
         log_dir = os.path.expanduser("~/.archetypax/logs")
         if not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
 
-        # Create log file with date in name
         date_str = datetime.now().strftime("%Y%m%d")
         log_file = os.path.join(log_dir, f"archetypax_{date_str}.log")
 
-    # Configure and store the logger
     logger = configure_logger(name, level=level, log_file=log_file)
     _loggers[name] = logger
+
     return logger
